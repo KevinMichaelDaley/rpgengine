@@ -54,6 +54,7 @@ from ..geom import (
 
 # fixed z-levels (metres) -- see the topology plan above.
 Z_BLK, Z_SRV, Z_DR, Z_SF, Z_FAS = 0.25, 2.1, 2.6, 3.0, 3.9
+Z_DHEAD2 = 3.55                      # loading-dock head
 # office storey rows (only in the zl when office_strip).
 Z_ODR, Z_OSIL, Z_OHED = 6.0, 4.8, 6.0
 
@@ -77,7 +78,7 @@ def _tenant_bays(run_len, n, end_pier=0.30, mid_pier=0.60):
 
 def _storefront_classify(bays, doors, fates, z_top, office,
                          void_span=None, recessed=frozenset(), wt=0.15,
-                         run_w=1e9, high_bk=None):
+                         run_w=1e9, high_bk=None, barred_wins=None):
     """Classifier factory for one storefront wall (u = along-run coord).
 
     fates[i]: 'open' | 'shut' | 'void' (checkpoint / fortified bays).
@@ -115,9 +116,17 @@ def _storefront_classify(bays, doors, fates, z_top, office,
                 if d0 - 1e-6 <= u0 < d1 - 1e-6:
                     if abs(zc0) < 1e-6:
                         return 'doorL'
-                    if zc0 < Z_DR - 1e-6:
+                    if zc0 < Z_SRV - 1e-6:   # 2.1 m door + tall transom
                         return 'doorU'
                     return 'window_transom'
+                if fate == 'barred':
+                    # narrow high-sill windows instead of plate glass;
+                    # grilles go over every opening (sign shell).
+                    for (wj0, wj1) in (barred_wins or {}).get(i, []):
+                        if wj0 - 1e-6 <= u0 < wj1 - 1e-6 and \
+                                0.9 - 1e-6 <= zc0 < Z_SRV - 1e-6:
+                            return 'window'
+                    return 'wall'
                 if zc0 < (0.9 if hi_bk else Z_BLK) - 1e-6:
                     return 'wall'          # bulkhead under the glass
                 return 'window'
@@ -286,6 +295,78 @@ def _store_sign(shell, rng, emit, u0, u1, z0, z1, smats, dead):
         q(nq[0], fq[0], fq[3], nq[3], m0)
 
 
+def _emit_box(shell, emit, u0, u1, p0, p1, z0, z1, m):
+    """Closed 6-quad box through an (u, proud, z) -> world map. Intended
+    for recalc shells (windings normalised)."""
+    c = [[[emit(u, pd, z) for z in (z0, z1)] for pd in (p0, p1)]
+         for u in (u0, u1)]
+    q = shell.quad
+    q(c[0][0][0], c[1][0][0], c[1][0][1], c[0][0][1], m)
+    q(c[0][1][0], c[0][1][1], c[1][1][1], c[1][1][0], m)
+    q(c[0][0][0], c[0][1][0], c[1][1][0], c[1][0][0], m)
+    q(c[0][0][1], c[1][0][1], c[1][1][1], c[0][1][1], m)
+    q(c[0][0][0], c[0][0][1], c[0][1][1], c[0][1][0], m)
+    q(c[1][0][0], c[1][1][0], c[1][1][1], c[1][0][1], m)
+
+
+def _grille(shell, emit, u0, u1, z0, z1):
+    """Security-bar grille over an opening: verticals + two rails."""
+    u = u0 + 0.06
+    while u < u1 - 0.05:
+        _emit_box(shell, emit, u, u + 0.024, 0.03, 0.06, z0 + 0.02,
+                  z1 - 0.02, M_METAL)
+        u += 0.16
+    for zr in (z0 + 0.22, z1 - 0.30):
+        _emit_box(shell, emit, u0 + 0.02, u1 - 0.02, 0.055, 0.085,
+                  zr, zr + 0.028, M_METAL)
+
+
+def _awning(shell, emit, u0, u1, kind, depth, z_top=2.95):
+    """Fabric awning over a storefront opening (open strips like the A1
+    awnings; manual winding -- non-recalc shell). 'flat': one sloped
+    panel + valance; 'barrel': quarter-arc strip."""
+    keep = shell.tag
+    shell.tag = 'awnings'
+    if kind == 'flat':
+        pts = [(0.03, z_top), (depth, z_top - 0.45)]
+    else:
+        import math as _m
+        pts = [(0.03 + depth * _m.sin(_m.radians(a2)),
+                z_top - depth + depth * _m.cos(_m.radians(a2)))
+               for a2 in (0, 30, 60, 90)]
+    for k in range(len(pts) - 1):
+        (pa, za), (pb, zb) = pts[k], pts[k + 1]
+        shell.quad(emit(u0, pb, zb), emit(u1, pb, zb),
+                   emit(u1, pa, za), emit(u0, pa, za), M_TRIM)
+    (pe, ze) = pts[-1]
+    shell.quad(emit(u0, pe, ze - 0.22), emit(u1, pe, ze - 0.22),
+               emit(u1, pe, ze), emit(u0, pe, ze), M_TRIM)   # valance
+
+
+def _roof_band(shell, emit, u0, u1, kind, z_par, depth=1.6):
+    """Sloped or barrel-curved roof plane BEHIND the parapet edge --
+    part of the roof, rising from just above the cap ring backward (the
+    funky-strip corrugated/tile look). `emit(u, pd, z)`: pd runs INWARD
+    from the wall plane. A rear drop quad closes the silhouette."""
+    keep = shell.tag
+    shell.tag = 'roof'
+    if kind == 'angled':
+        pts = [(0.05, z_par + 0.02), (depth, z_par + 0.85)]
+    else:
+        import math as _m
+        pts = [(0.05 + depth * _m.sin(_m.radians(a2)),
+                z_par + 0.02 + 0.83 * (1.0 - _m.cos(_m.radians(a2))))
+               for a2 in (0, 35, 65, 90)]
+    for k in range(len(pts) - 1):
+        (pa, za), (pb, zb) = pts[k], pts[k + 1]
+        shell.quad(emit(u0, pa, za), emit(u1, pa, za),
+                   emit(u1, pb, zb), emit(u0, pb, zb), M_METAL)
+    (pe, ze) = pts[-1]
+    shell.quad(emit(u0, pe, ze - 0.55), emit(u1, pe, ze - 0.55),
+               emit(u1, pe, ze), emit(u0, pe, ze), M_METAL)  # rear drop
+    shell.tag = keep
+
+
 def _flight_straight(shell, x0, x1, y_base, y_top, z_base, z_top,
                      foot_lo, foot_hi):
     """Straight footed-stringer flight along y (the A1 stringer discipline:
@@ -380,8 +461,8 @@ def build_minimall(p, rng):
     z_ceil = z_roof - 0.12            # inner faces stop HERE -- and it must
     # be a GRID row (the dingbat lesson: a non-row inner_zmax lets cells
     # overshoot to the roof plane, 3 faces per edge).
-    zl = [0.0, Z_BLK, 0.9, 1.15, Z_SRV, Z_DR, Z_SF, Z_FAS, z_ceil, z_roof,
-          z_par]
+    zl = [0.0, Z_BLK, 0.9, 1.15, Z_SRV, Z_DR, Z_SF, Z_DHEAD2, Z_FAS,
+          z_ceil, z_roof, z_par]
     if office:
         zl += [Z_OSIL, Z_OHED]
     zl = sorted(set(zl))
@@ -402,8 +483,16 @@ def build_minimall(p, rng):
               if not (anchor_on and i3 in (ka, ka + 1))]
     bays_w = _tenant_bays(Wy, n_w) if corner else []
     shut_p = 1.0 if dead else p["shutters"]
-    fates_m = ['shut' if rng.random() < shut_p else 'open' for _ in bays_m]
-    fates_w = ['shut' if rng.random() < shut_p else 'open' for _ in bays_w]
+
+    def roll_fate():
+        if rng.random() < shut_p:
+            return 'shut'
+        if rng.random() < p["bars"]:
+            return 'barred'
+        return 'open'
+
+    fates_m = [roll_fate() for _ in bays_m]
+    fates_w = [roll_fate() for _ in bays_w]
     n_rem = len(bays_m)
     kf = kc = -1
     if p["one_fortified"]:
@@ -440,12 +529,12 @@ def build_minimall(p, rng):
     # rear LOADING DOCKS: heavy sectional door at truck-sill height per
     # tenant, seeded ~40% inset into a recessed dock well.
     docks_on = p["loading_docks"]
-    Z_DSILL, Z_DHEAD = 1.15, 3.0
+    Z_DSILL, Z_DHEAD = 1.15, Z_DHEAD2   # ~2.4 m clear above the sill
 
     def dock_layout(b0, b1):
         c = (b0 + b1) / 2.0
         man = (b0 + 0.5, b0 + 1.4)
-        dw = min(2.6, (b1 - b0) * 0.47)
+        dw = min(3.0, (b1 - b0) * 0.55)
         j1 = min(c + 0.3 + dw, b1 - 0.35)   # CLAMP inside the bay: the
         # last bay's dock overflowed past the building end wall.
         dock = (j1 - dw, j1)
@@ -470,6 +559,27 @@ def build_minimall(p, rng):
     doors_w = [door_span(o0, o1, rng.random() < 0.5)
                for (_b0, _b1, o0, o1) in bays_w]
 
+    def barred_windows(bays, doors, fates):
+        # one or two narrow (0.8 m) high-sill windows on the blank side
+        # of the door.
+        out = {}
+        for i, (_b0, _b1, o0, o1) in enumerate(bays):
+            if fates[i] != 'barred':
+                continue
+            d0, d1 = doors[i]
+            lo2, hi2 = (d1, o1) if d1 - o0 < o1 - d0 else (o0, d0)
+            span2 = hi2 - lo2
+            wins = []
+            if span2 > 1.6:
+                wins.append((lo2 + 0.35, lo2 + 1.15))
+            if span2 > 3.2:
+                wins.append((hi2 - 1.15, hi2 - 0.35))
+            out[i] = wins
+        return out
+
+    bw_m = barred_windows(bays_m, doors_m, fates_m)
+    bw_w = barred_windows(bays_w, doors_w, fates_w)
+
     # ---- extra court arms: WEST ('[' / C, E) + MID (E). Each is a wing
     # mass off the run's south face; the EAST arm keeps the original wing
     # path. face 'e': storefront on the arm's east plane facing the court;
@@ -483,42 +593,52 @@ def build_minimall(p, rng):
     for xa in xarms:
         ab = _tenant_bays(Wy, n_w)
         xa['bays'] = ab
-        xa['fates'] = ['shut' if rng.random() < shut_p else 'open'
-                       for _ in ab]
+        xa['fates'] = [roll_fate() for _ in ab]
         xa['doors'] = [door_span(o0, o1, rng.random() < 0.5)
                        for (_b0, _b1, o0, o1) in ab]
         xa['high'] = [rng.random() < p["high_bulkhead"] for _ in ab]
+        xa['bw'] = barred_windows(ab, xa['doors'], xa['fates'])
 
-    # ---- peaked parapets: seeded per bay, spanning/centred on a bay --------
+    # ---- mitred corner doorway (bar/L, rectilinear west corner) ------------
+    cdoor_on = p["corner_door"] and layout in ('bar', 'L')
+    c1d = 1.7
+    # ---- raised parapet fronts: seeded per bay, gable PEAK or flat HIGH
+    # FALSE FRONT (the funky-strip look); roof bands suppress them. --------
     aw_pk = 0.16
+    band_on = p["roof_band"] != 'none'
+    pk_frac = 0.0 if band_on else p["peak_fraction"]
+
+    def roll_peak(pb0, pb1):
+        xc = (pb0 + pb1) / 2.0
+        if rng.random() < 0.5:
+            # flat-topped false front: wide apex, taller.
+            return (pb0, pb1, xc, z_par + 0.7 + rng.random() * 0.7,
+                    (pb1 - pb0) * 0.85)
+        return (pb0, pb1, xc, z_par + 0.55 + rng.random() * 0.5, aw_pk)
+
     peaks_m, peaks_w = [], []
     for (b0, b1, _o0, _o1) in bays_m:
-        if rng.random() < p["peak_fraction"]:
+        if rng.random() < pk_frac:
             pb0 = max(b0, e_ang) if layout == 'angled' else b0
             # (clamped east of the slant strip: a peak base over the
             # custom band would put 3 faces on the wall-top line)
-            xc = (pb0 + b1) / 2.0
-            zpk = z_par + 0.55 + rng.random() * 0.5
-            peaks_m.append((pb0, b1, xc, zpk))
+            peaks_m.append(roll_peak(pb0, b1))
     for (b0, b1, _o0, _o1) in bays_w:
-        if rng.random() < p["peak_fraction"]:
-            xc = (b0 + b1) / 2.0
-            zpk = z_par + 0.55 + rng.random() * 0.5
-            peaks_w.append((b0, b1, xc, zpk))
+        if rng.random() < pk_frac:
+            peaks_w.append(roll_peak(b0, b1))
     for xa in xarms:
         xa['peaks'] = []
         for (b0, b1, _o0, _o1) in xa['bays']:
-            if rng.random() < p["peak_fraction"]:
-                xa['peaks'].append((b0, b1, (b0 + b1) / 2.0,
-                                    z_par + 0.55 + rng.random() * 0.5))
+            if rng.random() < pk_frac:
+                xa['peaks'].append(roll_peak(b0, b1))
 
     # ---- line families -----------------------------------------------------
     xl = {0.0, Wm, Wm - t, We, We - t}
     if layout != 'angled':
         xl.add(t)                     # west cap-corner line (rectilinear
         # corners only; the angled slant region replaces it)
-    for (p0k, p1k, xck, _z) in peaks_m:
-        xl |= {p0k, p1k, xck - aw_pk / 2.0, xck + aw_pk / 2.0}
+    for (p0k, p1k, xck, _z, _aw) in peaks_m:
+        xl |= {p0k, p1k, xck - _aw / 2.0, xck + _aw / 2.0}
     if corner:
         xl.add(Wm + t)                # wing-front cap band inset line
     if anchor_on:
@@ -529,6 +649,8 @@ def build_minimall(p, rng):
         dxt_a = t * ((wx * wx + D * D) ** 0.5) / D
         ei2_a = 0.002                 # the slant roof island's inset
         xl |= {wx, e_ang}
+    if cdoor_on:
+        xl.add(c1d)
         # NOTE the cap-line endpoints (wx+dxt, dxt) are NOT grid lines --
         # they are injected into the front/rear WALL u_lines only, so the
         # wall top edges weld the strip corners without polluting the
@@ -546,7 +668,12 @@ def build_minimall(p, rng):
         xl |= {b0, b1, o0, o1}
     for (d0, d1) in doors_m:
         xl |= {d0, d1}
+    for wins in bw_m.values():
+        for pr in wins:
+            xl |= set(pr)
     yl = {0.0, D, t, D - t}
+    if cdoor_on:
+        yl.add(c1d)
     if corner or xarms:
         yl |= {-Wy, -Wy + t}
     for xa in xarms:
@@ -554,19 +681,25 @@ def build_minimall(p, rng):
             yl |= {b0 - Wy, b1 - Wy, o0 - Wy, o1 - Wy}
         for (d0, d1) in xa['doors']:
             yl |= {d0 - Wy, d1 - Wy}
-        for (p0k, p1k, xck, _z) in xa['peaks']:
-            yl |= {p0k - Wy, p1k - Wy, xck - aw_pk / 2.0 - Wy,
-                   xck + aw_pk / 2.0 - Wy}
+        for wins in xa['bw'].values():
+            for (w0b, w1b) in wins:
+                yl |= {w0b - Wy, w1b - Wy}
+        for (p0k, p1k, xck, _z, _aw) in xa['peaks']:
+            yl |= {p0k - Wy, p1k - Wy, xck - _aw / 2.0 - Wy,
+                   xck + _aw / 2.0 - Wy}
     if corner:
         # EAST wing lines (these were accidentally swallowed into the
         # xarms loop -- plain L has no xarms, so they never ran).
-        for (p0k, p1k, xck, _z) in peaks_w:
-            yl |= {-Wy + p0k, -Wy + p1k, -Wy + xck - aw_pk / 2.0,
-                   -Wy + xck + aw_pk / 2.0}
+        for (p0k, p1k, xck, _z, _aw) in peaks_w:
+            yl |= {-Wy + p0k, -Wy + p1k, -Wy + xck - _aw / 2.0,
+                   -Wy + xck + _aw / 2.0}
         for (b0, b1, o0, o1) in bays_w:
             yl |= {b0 - Wy, b1 - Wy, o0 - Wy, o1 - Wy}
         for (d0, d1) in doors_w:
             yl |= {d0 - Wy, d1 - Wy}
+        for wins in bw_w.values():
+            for (w0b, w1b) in wins:
+                yl |= {w0b - Wy, w1b - Wy}
     # rear service man-doors (+ dock jambs when loading docks are on).
     if docks_on:
         srv_m = [mn for (mn, _dk, _ins) in dock_m]
@@ -619,7 +752,7 @@ def build_minimall(p, rng):
     cls_m = _storefront_classify(bays_m, doors_m, fates_m, Z_SF, office,
                                  void_span=(a0, a1) if anchor_on else None,
                                  recessed=recessed, wt=wt, run_w=Wm,
-                                 high_bk=high_bk_m)
+                                 high_bk=high_bk_m, barred_wins=bw_m)
     mid_span = next(((xa['ox0'], xa['ox1']) for xa in xarms
                      if xa['ox1'] > 0.0), None)
     if mid_span:
@@ -629,6 +762,13 @@ def build_minimall(p, rng):
             if mid_span[0] - 1e-6 <= u0 < mid_span[1] - 1e-6:
                 return 'void'
             return cls_m_base(u0, zc0)
+    if cdoor_on:
+        cls_m_base2 = cls_m
+
+        def cls_m(u0, zc0):           # the mitred corner owns the ground
+            if u0 < c1d - 1e-6 and zc0 < Z_SF - 1e-6:
+                return 'void'
+            return cls_m_base2(u0, zc0)
 
     fw_lines = [v for v in xl if wx - 1e-9 <= v <= Wm + 1e-9]
     _wf = _Wall(shell, (0, 0, 0), (1, 0, 0), fw_lines, zl,
@@ -638,7 +778,8 @@ def build_minimall(p, rng):
     # court-arm storefronts + their outer/south walls.
     for xa in xarms:
         ab, ad, af, ah = xa['bays'], xa['doors'], xa['fates'], xa['high']
-        cls_a2 = _storefront_classify(ab, ad, af, Z_SF, office, high_bk=ah)
+        cls_a2 = _storefront_classify(ab, ad, af, Z_SF, office, high_bk=ah,
+                                      barred_wins=xa['bw'])
         fx = xa['fx']
         nrm = (1, 0, 0) if xa['face'] == 'e' else (-1, 0, 0)
         shell.tag = 'storefront'
@@ -672,7 +813,7 @@ def build_minimall(p, rng):
         _ws2.fill(plain_wall)
     if corner:
         cls_w = _storefront_classify(bays_w, doors_w, fates_w, Z_SF, office,
-                                     high_bk=high_bk_w)
+                                     high_bk=high_bk_w, barred_wins=bw_w)
 
         def cls_wing(u0, zc0):        # u = y + Wy along the wing run
             return cls_w(u0, zc0)
@@ -786,11 +927,42 @@ def build_minimall(p, rng):
         _wsl.fill(plain_wall)
     elif not has_west_arm:
         # west side x=0 (faces -x), y 0..D.
+        def west_cls(u0, zc0):
+            if cdoor_on and u0 < c1d - 1e-6 and zc0 < Z_SF - 1e-6:
+                return 'void'
+            return 'wall'
+
         _ws = _Wall(shell, (0, 0, 0), (0, 1, 0),
                     [v for v in yl if v >= -1e-9], zl, (-1, 0, 0), M_STUCCO,
                     thickness=thick, inner_zmax=iz_max)
         _ws.inner_u0, _ws.inner_u1 = wt, D - wt
-        _ws.fill(plain)
+        _ws.fill(west_cls)
+    if cdoor_on:
+        # the mitred storefront across the corner: a planar 45-degree
+        # _Wall carrying a glazed door with a tall transom.
+        L2 = c1d * (2.0 ** 0.5)
+        ud0, ud1 = L2 / 2.0 - 0.475, L2 / 2.0 + 0.475
+        shell.tag = 'storefront'
+
+        def cham_cls(u0, zc0):
+            if ud0 - 1e-6 <= u0 < ud1 - 1e-6:
+                if abs(zc0) < 1e-6:
+                    return 'doorL'
+                if zc0 < Z_SRV - 1e-6:
+                    return 'doorU'
+                return 'window_transom'
+            if zc0 < Z_BLK - 1e-6:
+                return 'wall'
+            return 'window'
+
+        _wch = _Wall(shell, (c1d, 0, 0),
+                     (-c1d / L2, c1d / L2, 0),
+                     [0.0, ud0, ud1, L2],
+                     [v for v in zl if v <= Z_SF + 1e-9],
+                     (-c1d / L2, -c1d / L2, 0), M_STUCCO,
+                     thickness=thick, inner_zmax=iz_max)
+        _wch.inner_u0, _wch.inner_u1 = 0.25, L2 - 0.25
+        _wch.fill(cham_cls, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS)
     if corner:
         # wing south end y=-Wy (faces -y), x Wm..We.
         _wsx = _Wall(shell, (0, -Wy, 0), (1, 0, 0),
@@ -893,16 +1065,16 @@ def build_minimall(p, rng):
 
     # ---- roof (cell-classified cap ring / plane / drops) -------------------
     def in_peak(cx, cy):
-        for (p0k, p1k, _xc, _z) in peaks_m:
+        for (p0k, p1k, _xc, _z, _aw) in peaks_m:
             if p0k < cx < p1k and 0.0 < cy < t:
                 return True
-        for (p0k, p1k, _xc, _z) in peaks_w:
+        for (p0k, p1k, _xc, _z, _aw) in peaks_w:
             if Wm < cx < Wm + t and -Wy + p0k < cy < -Wy + p1k:
                 return True
         for xa in xarms:
             band = ((xa['fx'] - t, xa['fx']) if xa['face'] == 'e'
                     else (xa['fx'], xa['fx'] + t))
-            for (p0k, p1k, _xc, _z) in xa['peaks']:
+            for (p0k, p1k, _xc, _z, _aw) in xa['peaks']:
                 if band[0] < cx < band[1] and \
                         -Wy + p0k < cy < -Wy + p1k:
                     return True
@@ -956,12 +1128,12 @@ def build_minimall(p, rng):
     # welded peaked parapets over their bays (front face continues the
     # wall plane; back face continues the cap inner drop).
     shell.tag = 'parapet'
-    starts_m = {round(p0k, 6) for (p0k, _p1, _xc, _z) in peaks_m}
-    ends_m = {round(p1k, 6) for (_p0, p1k, _xc, _z) in peaks_m}
-    for (p0k, p1k, xck, zpk) in peaks_m:
+    starts_m = {round(p0k, 6) for (p0k, _p1, _xc, _z, _aw) in peaks_m}
+    ends_m = {round(p1k, 6) for (_p0, p1k, _xc, _z, _aw) in peaks_m}
+    for (p0k, p1k, xck, zpk, awk) in peaks_m:
         # adjacent peaks MERGE at their shared bay line: both stubs there
         # would be coincident opposite-winding quads (doubled faces).
-        _peak_wall(shell, xl, p0k, p1k, xck, aw_pk, z_par, zpk, t,
+        _peak_wall(shell, xl, p0k, p1k, xck, awk, z_par, zpk, t,
                    lambda u, d2, z: (u, d2, z),
                    stub_l=round(p0k, 6) not in ends_m,
                    stub_r=round(p1k, 6) not in starts_m)
@@ -969,31 +1141,31 @@ def build_minimall(p, rng):
         fx = xa['fx']
         pk = xa['peaks']
         if xa['face'] == 'e':
-            st2 = {round(p0k, 6) for (p0k, _p1, _x, _z) in pk}
-            en2 = {round(p1k, 6) for (_p0, p1k, _x, _z) in pk}
-            for (p0k, p1k, xck, zpk) in pk:
+            st2 = {round(p0k, 6) for (p0k, _p1, _x, _z, _aw) in pk}
+            en2 = {round(p1k, 6) for (_p0, p1k, _x, _z, _aw) in pk}
+            for (p0k, p1k, xck, zpk, awk) in pk:
                 _peak_wall(shell, [v + Wy for v in yl], p0k, p1k, xck,
-                           aw_pk, z_par, zpk, t,
+                           awk, z_par, zpk, t,
                            lambda u, d2, z: (fx - d2, -Wy + u, z),
                            stub_l=round(p0k, 6) not in en2,
                            stub_r=round(p1k, 6) not in st2)
         else:
-            st2 = {round(Wy - p1k, 6) for (_p0, p1k, _x, _z) in pk}
-            en2 = {round(Wy - p0k, 6) for (p0k, _p1, _x, _z) in pk}
-            for (p0k, p1k, xck, zpk) in pk:
+            st2 = {round(Wy - p1k, 6) for (_p0, p1k, _x, _z, _aw) in pk}
+            en2 = {round(Wy - p0k, 6) for (p0k, _p1, _x, _z, _aw) in pk}
+            for (p0k, p1k, xck, zpk, awk) in pk:
                 u0k, u1k = Wy - p1k, Wy - p0k
                 _peak_wall(shell, sorted(-v for v in yl), u0k, u1k,
-                           Wy - xck, aw_pk, z_par, zpk, t,
+                           Wy - xck, awk, z_par, zpk, t,
                            lambda u, d2, z: (fx + d2, -u, z),
                            stub_l=round(u0k, 6) not in en2,
                            stub_r=round(u1k, 6) not in st2)
-    starts_w = {round(Wy - p1k, 6) for (_p0, p1k, _xc, _z) in peaks_w}
-    ends_w = {round(Wy - p0k, 6) for (p0k, _p1, _xc, _z) in peaks_w}
-    for (p0k, p1k, xck, zpk) in peaks_w:
+    starts_w = {round(Wy - p1k, 6) for (_p0, p1k, _xc, _z, _aw) in peaks_w}
+    ends_w = {round(Wy - p0k, 6) for (p0k, _p1, _xc, _z, _aw) in peaks_w}
+    for (p0k, p1k, xck, zpk, awk) in peaks_w:
         # u runs along -y (handedness for the -x-facing wing wall).
         u0k, u1k = Wy - p1k, Wy - p0k
         _peak_wall(shell, sorted(-v for v in yl), u0k, u1k,
-                   Wy - xck, aw_pk, z_par, zpk, t,
+                   Wy - xck, awk, z_par, zpk, t,
                    lambda u, d2, z: (Wm + d2, -u - 0.0, z),
                    stub_l=round(u0k, 6) not in ends_w,
                    stub_r=round(u1k, 6) not in starts_w)
@@ -1022,20 +1194,26 @@ def build_minimall(p, rng):
             segs.append((cur, seg1))
         return segs
 
+    # the projecting canopy is OPTIONAL (canopy_depth < 0.5 = none: the
+    # funky no-canopy strip -- awnings become the cover); the office deck
+    # implies it.
+    has_canopy = office or cd >= 0.5
     deck_segs = split_segs(wx + x_deck0, Wm)
-    for (sx0, sx1) in deck_segs:
-        _box(can, (sx0, -cd, deck_lo), (sx1, -0.002, deck_top), M_CONCRETE)
-    if corner:
-        _box(can, (Wm - cd, -Wy, deck_lo), (Wm - 0.002, -cd - 0.002,
-             deck_top), M_CONCRETE)
-    for xa in xarms:
-        fx = xa['fx']
-        if xa['face'] == 'e':
-            _box(can, (fx + 0.002, -Wy, deck_lo),
-                 (fx + cd, -cd - 0.002, deck_top), M_CONCRETE)
-        else:
-            _box(can, (fx - cd, -Wy, deck_lo),
-                 (fx - 0.002, -cd - 0.002, deck_top), M_CONCRETE)
+    if has_canopy:
+        for (sx0, sx1) in deck_segs:
+            _box(can, (sx0, -cd, deck_lo), (sx1, -0.002, deck_top),
+                 M_CONCRETE)
+        if corner:
+            _box(can, (Wm - cd, -Wy, deck_lo), (Wm - 0.002, -cd - 0.002,
+                 deck_top), M_CONCRETE)
+        for xa in xarms:
+            fx = xa['fx']
+            if xa['face'] == 'e':
+                _box(can, (fx + 0.002, -Wy, deck_lo),
+                     (fx + cd, -cd - 0.002, deck_top), M_CONCRETE)
+            else:
+                _box(can, (fx - cd, -Wy, deck_lo),
+                     (fx - 0.002, -cd - 0.002, deck_top), M_CONCRETE)
     # (bal_modes precomputed before the walls -- the recessed bays void
     # their floor-2 cells in the storefront classifier.)
     if office:
@@ -1084,7 +1262,9 @@ def build_minimall(p, rng):
             _wall_solid(can, 'y', Wm - cd + 0.02, -Wy + 0.02, -cd - 0.06,
                         deck_top + 0.002, deck_top + 0.92, 0.12, None,
                         M_STUCCO)
-    if p["arcade"]:
+    if not has_canopy:
+        pass                          # no canopy: no piers, no posts
+    elif p["arcade"]:
         can.tag = 'canopy'
         _box(can, (0.002, -cd, deck_lo - 0.45), (Wm - 0.002, -cd + 0.12,
              deck_lo + 0.02), M_STUCCO)   # fascia embeds 20 mm into the
@@ -1119,6 +1299,81 @@ def build_minimall(p, rng):
             for y in posts_y:
                 _box(can, (px2, y - 0.05, 0.0),
                      (px2 + 0.10, y + 0.05, deck_lo + 0.02), M_METAL)
+    if cdoor_on:
+        # abutting-island soffit over the corner notch at storefront-head
+        # level: a triangle quadified by centroid subdivision (3 quads).
+        can.tag = 'canopy'
+        A3 = (c1d - 0.004, 0.002)
+        B3 = (0.002, c1d - 0.004)
+        C3 = (0.002, 0.002)
+        G3 = ((A3[0] + B3[0] + C3[0]) / 3.0,
+              (A3[1] + B3[1] + C3[1]) / 3.0)
+        mAB = ((A3[0] + B3[0]) / 2.0, (A3[1] + B3[1]) / 2.0)
+        mBC = ((B3[0] + C3[0]) / 2.0, (B3[1] + C3[1]) / 2.0)
+        mCA = ((C3[0] + A3[0]) / 2.0, (C3[1] + A3[1]) / 2.0)
+
+        def zq3(pt):
+            return (pt[0], pt[1], Z_SF)
+
+        can.quad(zq3(A3), zq3(mCA), zq3(G3), zq3(mAB), M_STUCCO)
+        can.quad(zq3(mAB), zq3(G3), zq3(mBC), zq3(B3), M_STUCCO)
+        can.quad(zq3(G3), zq3(mCA), zq3(C3), zq3(mBC), M_STUCCO)
+    # fabric awnings (seeded per open/barred bay) + roof bands.
+    def emit_front2(u, pd, z):
+        return (u, -0.002 - pd, z)
+
+    def emit_wing2(u, pd, z):
+        return (Wm - 0.002 - pd, -u, z)
+
+    wall_sets = [(emit_front2, bays_m, fates_m, False)]
+    if corner:
+        wall_sets.append((emit_wing2, bays_w, fates_w, True))
+    for xa in xarms:
+        fx2 = xa['fx']
+        if xa['face'] == 'e':
+            wall_sets.append((
+                (lambda fx3: lambda u, pd, z: (fx3 + 0.002 + pd,
+                                               -Wy + u, z))(fx2),
+                xa['bays'], xa['fates'], False))
+        else:
+            wall_sets.append((
+                (lambda fx3: lambda u, pd, z: (fx3 - 0.002 - pd,
+                                               -u, z))(fx2),
+                xa['bays'], xa['fates'], True))
+    # awnings are the ALTERNATIVE cover: never under the balcony deck
+    # (office) or a projecting canopy -- only no-canopy strips get them.
+    if not office and not has_canopy:
+        for (em2, bys2, fts2, mir2) in wall_sets:
+            for i2b, (_b0, _b1, o0b, o1b) in enumerate(bys2):
+                if fts2[i2b] not in ('open', 'barred'):
+                    continue
+                if em2 is emit_front2 and anchor_on and \
+                        a0 - 1e-6 < o0b < a1 + 1e-6:
+                    continue
+                if rng.random() >= p["awning_fraction"]:
+                    continue
+                kind2 = 'barrel' if rng.random() < 0.5 else 'flat'
+                dp2 = 0.8 + rng.random() * 0.6
+                ua2, ub2 = (Wy - o1b, Wy - o0b) if mir2 else (o0b, o1b)
+                _awning(can, em2, ua2 + 0.08, ub2 - 0.08, kind2, dp2)
+    if p["roof_band"] != 'none':
+        # pd runs INWARD (behind the wall edge, over the roof plane).
+        for (s0b, s1b) in split_segs(wx + 0.05, Wm - 0.05):
+            _roof_band(can, lambda u, pd, z: (u, pd, z), s0b, s1b,
+                       p["roof_band"], z_par)
+        if corner:
+            _roof_band(can, lambda u, pd, z: (Wm + pd, -u, z), 0.05,
+                       Wy - 0.05, p["roof_band"], z_par)
+        for xa in xarms:
+            fx4 = xa['fx']
+            if xa['face'] == 'e':
+                _roof_band(can, (lambda f5: lambda u, pd, z:
+                                 (f5 - pd, -Wy + u, z))(fx4),
+                           0.05, Wy - 0.05, p["roof_band"], z_par)
+            else:
+                _roof_band(can, (lambda f5: lambda u, pd, z:
+                                 (f5 + pd, -u, z))(fx4),
+                           0.05, Wy - 0.05, p["roof_band"], z_par)
     canopy_ob = can.to_object("LA_MiniMall_Canopy", mats)
 
     # ---- office-strip access stair (straight, footed stringers) ------------
@@ -1138,8 +1393,14 @@ def build_minimall(p, rng):
     for (wx0s, wx1s) in walk_segs:
         _box(lot, (wx0s, -cd - 0.45, 0.0), (wx1s, -0.002, 0.14), M_CONCRETE)
     if anchor_on:
+        apx1 = a1 - 0.002
+        if corner:
+            # clear of the wing walkway strip (an east-end anchor's apron
+            # plane coincided with it -- coplanar T-junction soup).
+            apx1 = min(apx1, Wm - cd - 0.456)   # clear of BOTH the wing
+            # strip plane and the lot slab's east plane
         _box(lot, (a0 + 0.002, -cd - 0.45, 0.0),
-             (a1 - 0.002, -1.602, 0.14), M_CONCRETE)   # anchor entry apron
+             (apx1, -1.602, 0.14), M_CONCRETE)         # anchor entry apron
     if corner:
         _box(lot, (Wm - cd - 0.45, -Wy, 0.0),
              (Wm - 0.002, -cd - 0.452, 0.14), M_CONCRETE)
@@ -1255,7 +1516,7 @@ def build_minimall(p, rng):
                       zA_roof, zA_par} |
                      ({Z_DSILL, Z_DHEAD} if docks_on else set()))
         apk = ((a0 + a1) / 2.0 - 2.4, (a0 + a1) / 2.0 + 2.4)
-        adk = (axc + 0.6, axc + 0.6 + 3.2)
+        adk = (axc + 0.5, axc + 0.5 + 3.6)
         axl = sorted({ax0, ax1, ax0 + t, ax1 - t, aop0, aop1, ad0, ad1,
                       asv[0], asv[1], apk[0], apk[1],
                       axc - 0.09, axc + 0.09} |
@@ -1272,7 +1533,7 @@ def build_minimall(p, rng):
                 if ad0 - 1e-6 <= u0 < ad1 - 1e-6:
                     if abs(zc0) < 1e-6:
                         return 'doorL'
-                    if zc0 < 3.0 - 1e-6:
+                    if zc0 < Z_DR - 1e-6:    # 2.6 m grocery double door
                         return 'doorU'
                     return 'window_transom'
                 if zc0 < Z_BLK - 1e-6:
@@ -1376,6 +1637,35 @@ def build_minimall(p, rng):
                     lambda u, pd, z: (u, AF - 0.002 - pd, z),
                     a0 + 0.6, a1 - 0.6, zA_sf + 0.06, zA_fas - 0.06,
                     smats, dead)
+    # security-bar grilles over every barred opening.
+    sign.tag = 'story'
+    grille_sets = [(emit_front, bays_m, doors_m, fates_m, bw_m, False)]
+    if corner:
+        grille_sets.append((emit_wing, bays_w, doors_w, fates_w, bw_w,
+                            True))
+    for xa in xarms:
+        fx2 = xa['fx']
+        if xa['face'] == 'e':
+            em3 = (lambda fx3: lambda u, pd, z:
+                   (fx3 + 0.002 + pd, -Wy + u, z))(fx2)
+            grille_sets.append((em3, xa['bays'], xa['doors'], xa['fates'],
+                                xa['bw'], False))
+        else:
+            em3 = (lambda fx3: lambda u, pd, z:
+                   (fx3 - 0.002 - pd, -u, z))(fx2)
+            grille_sets.append((em3, xa['bays'], xa['doors'], xa['fates'],
+                                xa['bw'], True))
+    for (em3, bys3, drs3, fts3, bws3, mir3) in grille_sets:
+        for i3, (_b0, _b1, o0b, o1b) in enumerate(bys3):
+            if fts3[i3] != 'barred':
+                continue
+            spans3 = [(drs3[i3][0], drs3[i3][1], 0.0, Z_SRV)]
+            for (w0b, w1b) in bws3.get(i3, []):
+                spans3.append((w0b, w1b, 0.9, Z_SRV))
+            for (ja, jb, za3, zb3) in spans3:
+                if mir3:
+                    ja, jb = Wy - jb, Wy - ja
+                _grille(sign, em3, ja, jb, za3, zb3)
     if p["roof_sign"]:
         rsx = bays_m[min(n - 1, max(0, n // 2))][0] + tw / 2.0
         for px in (rsx - 1.6, rsx + 1.5):
@@ -1582,8 +1872,9 @@ SPEC = [
          unit='LENGTH', desc="Bay width per tenant"),
     dict(name="depth", type='FLOAT', default=12.0, min=8.0, max=16.0,
          unit='LENGTH'),
-    dict(name="canopy_depth", type='FLOAT', default=2.5, min=1.5, max=3.5,
-         unit='LENGTH'),
+    dict(name="canopy_depth", type='FLOAT', default=2.5, min=0.0, max=3.5,
+         unit='LENGTH', desc="Below 0.5 = NO canopy (awnings become the "
+              "storefront cover)"),
     dict(name="sign_band", type='BOOL', default=True,
          desc="Per-tenant mismatched sign panels on the fascia"),
     dict(name="parking_rows", type='INT', default=1, min=0, max=3,
@@ -1599,6 +1890,12 @@ SPEC = [
     dict(name="pole_panels", type='INT', default=4, min=1, max=8),
     dict(name="shutters", type='FLOAT', default=0.3, min=0.0, max=1.0,
          desc="Fraction of front roll-up shutters down"),
+    dict(name="bars", type='FLOAT', default=0.25, min=0.0, max=1.0,
+         desc="Fraction of tenants with narrow barred openings instead "
+              "of plate glass"),
+    dict(name="awning_fraction", type='FLOAT', default=0.5, min=0.0,
+         max=1.0, desc="Fraction of storefronts with a fabric awning "
+              "(barrel or flat, seeded depth)"),
     dict(name="high_bulkhead", type='FLOAT', default=0.4, min=0.0, max=1.0,
          desc="Fraction of storefronts on a 0.9 m masonry knee wall "
               "(glazing and roll-ups stop there instead of grade)"),
@@ -1624,6 +1921,13 @@ SPEC = [
          desc="Stucco arcade piers + hanging fascia instead of posts"),
     dict(name="roof_sign", type='BOOL', default=False,
          desc="Rooftop frame sign instead of / beside the pole sign"),
+    dict(name="roof_band", type='ENUM', default='none',
+         items=('none', 'angled', 'curved'),
+         desc="Forward-leaning or barrel-curved roof band over the "
+              "walkway (suppresses parapet peaks)"),
+    dict(name="corner_door", type='BOOL', default=False,
+         desc="Mitred 45-degree corner doorway at the west street corner "
+              "(bar/L layouts)"),
     dict(name="office_strip", type='BOOL', default=False,
          desc="Full second storey: balcony deck over the canopy, stair "
               "from the lot"),
