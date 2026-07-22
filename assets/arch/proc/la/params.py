@@ -85,10 +85,18 @@ _PROP_BUILDERS = {
 }
 
 
-def register_tool(idname, label, family, build, spec):
-    """Declare a tool. Call at module import; idempotent by idname."""
+def register_tool(idname, label, family, build, spec,
+                  needs_context=False, at_cursor=True):
+    """Declare a tool. Call at module import; idempotent by idname.
+
+    needs_context: build is called as build(params, rng, context) and may
+    read/modify the selection (e.g. the road-network operator consumes the
+    active edge-skin mesh). at_cursor=False: the build returns objects in
+    world coordinates; linking skips the cursor offset."""
     _REGISTRY[idname] = dict(idname=idname, label=label, family=family,
-                             build=build, spec=list(spec))
+                             build=build, spec=list(spec),
+                             needs_context=needs_context,
+                             at_cursor=at_cursor)
 
 
 def registry():
@@ -110,7 +118,12 @@ def run_tool(idname, **overrides):
     t = _REGISTRY[idname]
     p = defaults(idname)
     p.update(overrides)
-    return _link_result(t, p, t["build"](p, random.Random(p["seed"])))
+    rng = random.Random(p["seed"])
+    if t.get("needs_context"):
+        objects = t["build"](p, rng, bpy.context)
+    else:
+        objects = t["build"](p, rng)
+    return _link_result(t, p, objects)
 
 
 def _link_result(tool, params, objects):
@@ -122,7 +135,8 @@ def _link_result(tool, params, objects):
     cursor = bpy.context.scene.cursor.location.copy()
     for ob in objects:
         coll.objects.link(ob)
-        ob.location = ob.location + cursor
+        if tool.get("at_cursor", True):
+            ob.location = ob.location + cursor
     for ob in bpy.context.selected_objects:
         ob.select_set(False)
     for ob in objects:
@@ -140,10 +154,16 @@ def _make_operator(tool):
         props[entry["name"]] = _PROP_BUILDERS[entry["type"]](entry)
 
     def execute(self, context):
-        del context
         p = {e["name"]: getattr(self, e["name"]) for e in tool["spec"]}
         p["seed"] = self.seed
-        objects = tool["build"](p, random.Random(self.seed))
+        try:
+            if tool.get("needs_context"):
+                objects = tool["build"](p, random.Random(self.seed), context)
+            else:
+                objects = tool["build"](p, random.Random(self.seed))
+        except ValueError as exc:
+            self.report({'ERROR'}, str(exc))
+            return {'CANCELLED'}
         _link_result(tool, p, objects)
         return {'FINISHED'}
 
