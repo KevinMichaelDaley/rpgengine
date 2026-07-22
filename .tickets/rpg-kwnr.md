@@ -1,6 +1,6 @@
 ---
 id: rpg-kwnr
-status: in_progress
+status: closed
 deps: [rpg-ezcn]
 links: []
 created: 2026-07-22T03:53:08Z
