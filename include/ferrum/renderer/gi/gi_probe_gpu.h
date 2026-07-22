@@ -55,6 +55,8 @@ typedef struct gi_probe_tuning {
     float emin;          /**< emission luminance over which a probe is a SOURCE. */
     float norm_gate;     /**< |sdf| under which a probe is a SURFACE probe (has a normal). */
     float stat_scale;    /**< scale on the probes' STATIC bounce gather. */
+    float dyn_gain;      /**< gain on radiance bounced off DYNAMIC albedo voxels
+                          *   only (art lever: colour bleed from banners etc.). */
     float smooth;        /**< steady-state probe temporal-EMA blend. */
     float vis_bias;      /**< Chebyshev self-visible band (m) -- probe-lattice dot artifacts. */
     float vis_varmin;    /**< Chebyshev variance floor: larger = softer falloff. */
@@ -76,7 +78,7 @@ typedef struct gi_probe_gpu {
              int field_on, near_dist, static_on, static_k, static_irr;
              int pass, seed, dmax, emin, nsamp, bounce, ray_clamp;
              int mis, norm_gate, hybrid, hero, stat_scale;
-             int dyn_alb, dyn_origin, dyn_dim, dyn_vox, dyn_on;
+             int dyn_alb, dyn_origin, dyn_dim, dyn_vox, dyn_on, dyn_gain;
              int static_origin, static_dim, static_vox;
              int sdf_active[GI_SDF_MAX_RESIDENT], sdf[GI_SDF_MAX_RESIDENT],
                  sdf_origin[GI_SDF_MAX_RESIDENT], sdf_dim[GI_SDF_MAX_RESIDENT],

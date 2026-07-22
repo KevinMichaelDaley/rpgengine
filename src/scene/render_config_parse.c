@@ -95,6 +95,7 @@ bool render_config_parse(const char *json, size_t len, struct arena *arena,
     out->gi_emin        = sd_field_num(r, "gi_emin",       out->gi_emin);
     out->gi_norm_gate   = sd_field_num(r, "gi_norm_gate",  out->gi_norm_gate);
     out->gi_stat_scale  = sd_field_num(r, "gi_stat_scale", out->gi_stat_scale);
+    out->gi_dyn_gain    = sd_field_num(r, "gi_dyn_gain",   out->gi_dyn_gain);
     out->gi_vis_bias    = sd_field_num(r, "gi_vis_bias",   out->gi_vis_bias);
     out->gi_vis_varmin  = sd_field_num(r, "gi_vis_varmin", out->gi_vis_varmin);
     out->gi_vis_sharp   = sd_field_num(r, "gi_vis_sharp",  out->gi_vis_sharp);

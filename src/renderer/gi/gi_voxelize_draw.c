@@ -6,6 +6,10 @@
 #include <string.h>
 
 #include "ferrum/renderer/gi/gi_voxelize.h"
+#include "ferrum/renderer/material.h"
+#include "ferrum/renderer/texture.h"
+
+#define GV_ALBEDO_UNIT 1   /* albedo sampler unit (the image is binding 0). */
 
 #define GV_GL_WRITE_ONLY                      0x88B9
 #define GV_GL_SHADER_IMAGE_ACCESS_BARRIER_BIT 0x00000020
@@ -43,17 +47,30 @@ void gi_voxelize_begin(gi_voxelize_t *v, unsigned int vol_tex, const int dim[3],
     glUseProgram(v->prog);
     v->BindImageTexture(0, vol_tex, 0, /*layered=*/1, 0, GV_GL_WRITE_ONLY, GL_RGBA8);
     glUniform1i(v->loc_vol, 0);
+    glUniform1i(v->loc_albmap, GV_ALBEDO_UNIT);   /* albedo sampler on its own unit. */
     glUniform3fv(v->loc_origin, 1, origin);
     glUniform3fv(v->loc_extent, 1, extent);
     glUniform3i(v->loc_dim, dim[0], dim[1], dim[2]);
 }
 
 void gi_voxelize_mesh(gi_voxelize_t *v, const static_mesh_t *mesh,
-                      const float model[16], const float albedo[3])
+                      const float model[16], const render_material_t *mat)
 {
     if (v == NULL || !v->ready || mesh == NULL || model == NULL) return;
     glUniformMatrix4fv(v->loc_model, 1, GL_FALSE, model);
-    glUniform3fv(v->loc_albedo, 1, albedo);
+
+    /* The object's REAL albedo: its material albedo map (x tint) sampled at the
+     * fragment UV. No map (or no material) -> the tint alone (white if NULL). */
+    const texture_t *alb = (mat != NULL) ? mat->maps[MATERIAL_TEX_ALBEDO] : NULL;
+    int has_albedo = (alb != NULL && alb->handle != 0u) ? 1 : 0;
+    const float white[3] = { 1.0f, 1.0f, 1.0f };
+    const float unit_uv[2] = { 1.0f, 1.0f };
+    glActiveTexture(GL_TEXTURE0 + GV_ALBEDO_UNIT);
+    glBindTexture(GL_TEXTURE_2D, has_albedo ? alb->handle : 0u);
+    glActiveTexture(GL_TEXTURE0);
+    glUniform1i(v->loc_has_albedo, has_albedo);
+    glUniform3fv(v->loc_tint, 1, (mat != NULL) ? mat->tint : white);
+    glUniform2fv(v->loc_uvscale, 1, (mat != NULL) ? mat->uv_scale : unit_uv);
     /* Rasterise along all three axes: a surface edge-on to one projection (and so
      * covered by only a sliver of fragments there) is face-on to another, which is
      * what makes the voxelisation hole-free for arbitrary orientations. */

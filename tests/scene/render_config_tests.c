@@ -134,6 +134,7 @@ static int test_new_keys_overlay(void)
         "  \"dir_pcf_taps\": 4, \"shadow_pcf_taps\": 1, \"lightmap_bands\": 4,"
         "  \"lm_fp16\": 1, \"lm_resident_layers\": 4, \"gi_dyn_voxel\": 0,"
         "  \"gi_march_quality\": 0.5, \"gi_frag_quality\": 0, \"sdf_fp16\": 1,"
+        "  \"gi_dyn_gain\": 5.0,"
         "  \"stream_upload_mb_per_frame\": 4, \"draw_distance\": 500.0,"
         "  \"texture_quality\": 2 }";
     render_config_t rc;
@@ -151,6 +152,7 @@ static int test_new_keys_overlay(void)
     ASSERT_INT_EQ(rc.lm_fp16, 1);
     ASSERT_INT_EQ(rc.lm_resident_layers, 4);
     ASSERT_INT_EQ(rc.gi_dyn_voxel, 0);
+    ASSERT_FLT_EQ(rc.gi_dyn_gain, 5.0f);
     ASSERT_FLT_EQ(rc.gi_march_quality, 0.5f);
     ASSERT_INT_EQ(rc.gi_frag_quality, 0);
     ASSERT_INT_EQ(rc.sdf_fp16, 1);

@@ -56,7 +56,7 @@ void render_config_defaults(render_config_t *rc)
      * cadence-dependent); every shipped config already used 0.45. */
     rc->gi_bounce = 0.45f;
     rc->gi_near = 2.2f; rc->gi_dmax = 2.5f; rc->gi_emin = 0.02f;
-    rc->gi_norm_gate = 0.75f; rc->gi_stat_scale = 1.0f;
+    rc->gi_norm_gate = 0.75f; rc->gi_stat_scale = 1.0f; rc->gi_dyn_gain = 1.0f;
     rc->gi_vis_bias = 0.30f; rc->gi_vis_varmin = 0.02f; rc->gi_vis_sharp = 1.0f;
     /* Offline brick placement + fix-up (probe_bake tool). */
     rc->gi_brick_coarse = 9.0f;

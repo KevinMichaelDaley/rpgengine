@@ -536,6 +536,7 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     cfg.gi_tuning.emin            = rc.gi_emin;
     cfg.gi_tuning.norm_gate       = rc.gi_norm_gate;
     cfg.gi_tuning.stat_scale      = rc.gi_stat_scale;
+    cfg.gi_tuning.dyn_gain        = rc.gi_dyn_gain;
     cfg.gi_tuning.smooth          = rc.gi_smooth;
     cfg.gi_tuning.vis_bias        = rc.gi_vis_bias;
     cfg.gi_tuning.vis_varmin      = rc.gi_vis_varmin;

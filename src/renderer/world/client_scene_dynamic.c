@@ -17,6 +17,68 @@
 
 #include "ferrum/renderer/client_scene.h"
 
+/* DYN_VOX_DEBUG=1: after voxelisation, read back (a) the dynamic albedo volume
+ * (coverage + mean colour + occluder boxes) and (b) the SH of probes near the
+ * first dynamic object, so a missing colour-bleed can be pinned to one link:
+ * no voxels written / wrong colour / no occluder / red never reaching the SH.
+ * Debug-only (env-gated), static buffers, prints a few frames then stops. */
+static void dyn_vox_debug_dump(client_scene_t *cs, unsigned int tex,
+                               const int dim[3])
+{
+    /* Sample at converged times, not the first frames: the probe field needs
+     * dozens of ticks to settle (EMA + multi-bounce recurrence). */
+    static int frame_no = 0;
+    ++frame_no;
+    if (frame_no != 10 && frame_no != 120 && frame_no != 360 && frame_no != 720)
+        return;
+    static unsigned char buf[4 * 1024 * 1024];
+    size_t need = (size_t)dim[0] * dim[1] * dim[2] * 4u;
+    if (need > sizeof buf) { fprintf(stderr, "[dynvox] volume too big to dump\n"); return; }
+    glBindTexture(GL_TEXTURE_3D, tex);
+    glGetTexImage(GL_TEXTURE_3D, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    size_t covered = 0; double r = 0, g = 0, b = 0;
+    for (size_t i = 0; i < need; i += 4)
+        if (buf[i + 3] > 0) { ++covered; r += buf[i]; g += buf[i+1]; b += buf[i+2]; }
+    fprintf(stderr, "[dynvox] dim %dx%dx%d covered=%zu", dim[0], dim[1], dim[2], covered);
+    if (covered) fprintf(stderr, " mean rgb=(%.0f,%.0f,%.0f)/255", r/covered, g/covered, b/covered);
+    fprintf(stderr, "; %u dyn objs:", cs->dyn_count);
+    for (uint32_t k = 0; k < cs->dyn_count && k < 4; ++k)
+        fprintf(stderr, " box[c=(%.1f,%.1f,%.1f) e=(%.2f,%.2f,%.2f)]",
+                cs->dyn_col[k].a[0], cs->dyn_col[k].a[1], cs->dyn_col[k].a[2],
+                cs->dyn_col[k].ext[0], cs->dyn_col[k].ext[1], cs->dyn_col[k].ext[2]);
+    fprintf(stderr, "\n");
+
+    /* Probe SH near the first dynamic object: does its colour reach any probe?
+     * psh layout: 24 floats/probe (12 diffuse then 12 spec); print the diffuse. */
+    gi_probe_gpu_t *g2 = &cs->world.gi.gpu;
+    uint32_t n = g2->n_probes;
+    if (g2->b_pos != 0u && g2->b_sh != 0u && n > 0u && cs->dyn_count > 0u) {
+        enum { DBG_MAXP = 4096 };
+        static float pos[DBG_MAXP * 4], sh[DBG_MAXP * 24];
+        if (n > DBG_MAXP) n = DBG_MAXP;
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g2->b_pos);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                           (GLsizeiptr)(n * 4 * sizeof(float)), pos);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g2->b_sh);
+        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                           (GLsizeiptr)(n * 24 * sizeof(float)), sh);
+        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+        const float *c = cs->dyn_col[0].a;
+        int shown = 0;
+        for (uint32_t i = 0; i < n && shown < 3; ++i) {
+            float dx = pos[i*4]-c[0], dy = pos[i*4+1]-c[1], dz = pos[i*4+2]-c[2];
+            if (dx*dx + dy*dy + dz*dz < 2.0f*2.0f) {
+                fprintf(stderr, "[dynvox]  probe %u @(%.1f,%.1f,%.1f) act=%.0f shd:",
+                        i, pos[i*4], pos[i*4+1], pos[i*4+2], pos[i*4+3]);
+                for (int k = 0; k < 12; ++k) fprintf(stderr, " %.3f", sh[i*24+k]);
+                fprintf(stderr, "\n");
+                ++shown;
+            }
+        }
+        if (shown == 0) fprintf(stderr, "[dynvox]  NO probes within 2m of dyn[0]!\n");
+    }
+}
+
 void client_scene_voxelize_dynamic(client_scene_t *cs)
 {
     if (cs == NULL || !cs->vox_ready || cs->dyn_count == 0) return;
@@ -35,7 +97,11 @@ void client_scene_voxelize_dynamic(client_scene_t *cs)
         if (ri >= cs->scene.count) continue;
         const render_renderable_t *r = &cs->scene.items[ri];
         if (r->mesh == NULL) continue;
-        gi_voxelize_mesh(&cs->vox, r->mesh, r->model, &cs->dyn_albedo[k * 3u]);
+        /* Voxelise the object's REAL surface: its resident material albedo MAP
+         * (x tint) sampled per fragment, not a precomputed flat tint, so a
+         * textured dynamic object bleeds its texture and the red-tint banner
+         * bleeds red (rpg gh_dyn). r->material is the resident material. */
+        gi_voxelize_mesh(&cs->vox, r->mesh, r->model, r->material);
 
         /* Occlusion proxy: the mesh's own bounds transformed to world, so a dynamic
          * object BLOCKS probe rays as well as colouring them. Derived from the mesh
@@ -63,6 +129,7 @@ void client_scene_voxelize_dynamic(client_scene_t *cs)
         }
     }
     gi_voxelize_end(&cs->vox);
+    if (getenv("DYN_VOX_DEBUG") != NULL) dyn_vox_debug_dump(cs, tex, dim);
     gi_probe_gpu_dyn_enable(g, 1);
 
     /* FR_DUMP_DYNVOL=1: readback at frame ~1 AND ~200 (post-convergence) --

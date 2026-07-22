@@ -27,6 +27,7 @@ void gi_probe_tuning_defaults(gi_probe_tuning_t *t)
     t->emin = 0.02f;            /* GI_EMIN */
     t->norm_gate = 0.75f;       /* GI_NORM_GATE */
     t->stat_scale = 1.0f;       /* GI_STAT_SCALE */
+    t->dyn_gain = 1.0f;         /* GI_DYN_GAIN */
     t->smooth = 0.15f;          /* GI_SMOOTH */
     t->vis_bias = 0.30f;        /* GI_VIS_BIAS */
     t->vis_varmin = 0.02f;      /* GI_VIS_VARMIN */

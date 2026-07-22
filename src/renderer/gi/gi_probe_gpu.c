@@ -95,6 +95,7 @@ static const char *CS_SRC =
     "uniform vec3 u_dyn_dim;\n"
     "uniform float u_dyn_vox;\n"
     "uniform int u_dyn_on;\n"
+    "uniform float u_dyn_gain;\n"  /* dynamic-albedo bleed gain (art lever). */
     "uniform sampler3D u_static_irr;\n"
     "uniform vec3 u_static_origin;\n"
     "uniform vec3 u_static_dim;\n"
@@ -175,7 +176,7 @@ static const char *CS_SRC =
     "  return texture(u_dyn_alb, g/u_dyn_dim); }\n"
     "vec3 scene_albedo(vec3 p, float lod){\n"
     /* Dynamic objects win: they are not in the baked voxel albedo at all. */
-    "  { vec4 dc=dyn_alb_at(p); if(dc.a>0.02) return dc.rgb/max(dc.a,1e-3); }\n"
+    "  { vec4 dc=dyn_alb_at(p); if(dc.a>0.02) return u_dyn_gain*dc.rgb/max(dc.a,1e-3); }\n"
     "  for(int i=0;i<16;++i){ if(u_sdf_active[i]==0) continue;\n"
     "    vec3 g=(p-u_sdf_origin[i])/u_sdf_vox[i];\n"
     "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
@@ -644,6 +645,7 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
         g->loc.dyn_dim   = glGetUniformLocation(p, "u_dyn_dim");
         g->loc.dyn_vox   = glGetUniformLocation(p, "u_dyn_vox");
         g->loc.dyn_on    = glGetUniformLocation(p, "u_dyn_on");
+        g->loc.dyn_gain  = glGetUniformLocation(p, "u_dyn_gain");
         g->loc.static_on  = glGetUniformLocation(p, "u_static_on");
         g->loc.static_k   = glGetUniformLocation(p, "u_static_k");
         g->loc.static_irr = glGetUniformLocation(p, "u_static_irr");
@@ -945,6 +947,12 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
         int unit = GI_SDF_UNIT_BASE + GI_SDF_MAX_RESIDENT + 1;
         float dimf[3] = { (float)g->dyn_dim[0], (float)g->dyn_dim[1], (float)g->dyn_dim[2] };
         glUniform1i(g->loc.dyn_on, on);
+        {
+            float dg = g->tuning.dyn_gain > 0.0f ? g->tuning.dyn_gain : 1.0f;
+            const char *e = getenv("GI_DYN_GAIN");
+            if (e != NULL) { float v = (float)atof(e); if (v > 0.0f) dg = v; }
+            glUniform1f(g->loc.dyn_gain, dg);
+        }
         glUniform1i(g->loc.dyn_alb, unit);
         glUniform3fv(g->loc.dyn_origin, 1, g->dyn_origin);
         glUniform3fv(g->loc.dyn_dim, 1, dimf);

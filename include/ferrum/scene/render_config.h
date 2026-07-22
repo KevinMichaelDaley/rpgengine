@@ -81,6 +81,8 @@ typedef struct render_config {
     float    gi_emin;               /**< emission luminance for a SOURCE probe. */
     float    gi_norm_gate;          /**< |sdf| under which a probe is a SURFACE probe. */
     float    gi_stat_scale;         /**< scale on the probes' STATIC bounce gather. */
+    float    gi_dyn_gain;           /**< gain on bounces off DYNAMIC albedo voxels only
+                                     *   (art lever: banner colour bleed). Default 1. */
     float    gi_vis_bias;           /**< Chebyshev self-visible band (probe dot artifacts). */
     float    gi_vis_varmin;         /**< Chebyshev variance floor (softer falloff). */
     float    gi_vis_sharp;          /**< Chebyshev falloff exponent (1 soft, 2 sharp). */

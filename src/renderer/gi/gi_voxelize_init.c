@@ -21,35 +21,46 @@
 static const char *const GV_VS =
     "#version 430 core\n"
     "layout(location=0) in vec3 in_position;\n"
+    "layout(location=3) in vec2 in_uv0;\n"   /* static_mesh binds uv0 at loc 3. */
     "uniform mat4 u_model;\n"
     "uniform vec3 u_origin;\n"
     "uniform vec3 u_extent;\n"
     "uniform int u_axis;\n"
     "out vec3 v_world;\n"
+    "out vec2 v_uv;\n"
     "void main(){\n"
     "  vec4 wp = u_model * vec4(in_position, 1.0);\n"
     "  v_world = wp.xyz;\n"
+    "  v_uv = in_uv0;\n"
     "  vec3 n = (wp.xyz - u_origin) / max(u_extent, vec3(1e-6));\n"
     "  vec2 xy = (u_axis==0) ? n.yz : ((u_axis==1) ? n.xz : n.xy);\n"
     "  gl_Position = vec4(xy * 2.0 - 1.0, 0.0, 1.0);\n"
     "}\n";
 
-/* Fragment: stamp the object's albedo into the voxel the fragment's WORLD position
- * falls in. a=1 marks "dynamic geometry here" so the probe shader prefers it over
- * the baked voxel albedo. */
+/* Fragment: stamp the object's real albedo -- its material ALBEDO MAP sampled at
+ * the fragment UV, times the material tint (no map -> tint alone) -- into the
+ * voxel the fragment's WORLD position falls in. a=1 marks "dynamic geometry here"
+ * so the probe shader prefers it over the baked voxel albedo. */
 static const char *const GV_FS =
     "#version 430 core\n"
     "layout(rgba8, binding=0) uniform writeonly image3D u_vol;\n"
     "in vec3 v_world;\n"
+    "in vec2 v_uv;\n"
     "uniform vec3 u_origin;\n"
     "uniform vec3 u_extent;\n"
     "uniform ivec3 u_dim;\n"
-    "uniform vec3 u_albedo;\n"
+    "uniform sampler2D u_albedo_map;\n"
+    "uniform int u_has_albedo;\n"
+    "uniform vec3 u_tint;\n"
+    "uniform vec2 u_uv_scale;\n"
     "void main(){\n"
+    "  vec3 map = (u_has_albedo != 0)\n"
+    "           ? texture(u_albedo_map, v_uv * u_uv_scale).rgb : vec3(1.0);\n"
+    "  vec3 albedo = u_tint * map;\n"
     "  vec3 n = (v_world - u_origin) / max(u_extent, vec3(1e-6));\n"
     "  ivec3 vi = ivec3(floor(n * vec3(u_dim)));\n"
     "  if(all(greaterThanEqual(vi, ivec3(0))) && all(lessThan(vi, u_dim)))\n"
-    "    imageStore(u_vol, vi, vec4(u_albedo, 1.0));\n"
+    "    imageStore(u_vol, vi, vec4(albedo, 1.0));\n"
     "}\n";
 
 static unsigned int gv_compile(unsigned int type, const char *src)
@@ -103,9 +114,12 @@ bool gi_voxelize_init(gi_voxelize_t *v, const gl_loader_t *loader)
     v->loc_origin = glGetUniformLocation(v->prog, "u_origin");
     v->loc_extent = glGetUniformLocation(v->prog, "u_extent");
     v->loc_dim    = glGetUniformLocation(v->prog, "u_dim");
-    v->loc_albedo = glGetUniformLocation(v->prog, "u_albedo");
     v->loc_axis   = glGetUniformLocation(v->prog, "u_axis");
     v->loc_vol    = glGetUniformLocation(v->prog, "u_vol");
+    v->loc_tint       = glGetUniformLocation(v->prog, "u_tint");
+    v->loc_uvscale    = glGetUniformLocation(v->prog, "u_uv_scale");
+    v->loc_has_albedo = glGetUniformLocation(v->prog, "u_has_albedo");
+    v->loc_albmap     = glGetUniformLocation(v->prog, "u_albedo_map");
 
     /* Attachment-less FBO: we rasterise purely to generate fragments; all output
      * goes through imageStore, so the framebuffer only needs a default size. */
