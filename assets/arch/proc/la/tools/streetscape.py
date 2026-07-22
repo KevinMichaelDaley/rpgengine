@@ -1690,6 +1690,95 @@ def _sweep_road(shell, walk, stations, lanes, lw, sw, wear, rng,
         strip_cells(y0r + 0.25, m0 - 0.1, Lt - 3.25, Lt - 2.8, M_PAINT_W)
 
 
+def _fillet_polyline(pts, R, closed=False):
+    """Round every sharp interior corner of a polyline with an arc of
+    radius ~R (clamped to the neighbouring segment lengths): an acutely
+    bent path would otherwise fold the swept road -- the sidewalk, at
+    the largest offset, cannot bend faster than its own radius."""
+    n = len(pts)
+    idxs = range(n) if closed else range(1, n - 1)
+    out = [] if closed else [pts[0]]
+    for i in idxs:
+        a, b, c = pts[(i - 1) % n], pts[i], pts[(i + 1) % n]
+        v0 = (b[0] - a[0], b[1] - a[1])
+        v1 = (c[0] - b[0], c[1] - b[1])
+        l0, l1 = math.hypot(*v0), math.hypot(*v1)
+        if l0 < 1e-6 or l1 < 1e-6:
+            out.append(b)
+            continue
+        d0 = (v0[0] / l0, v0[1] / l0)
+        d1 = (v1[0] / l1, v1[1] / l1)
+        dot = max(-1.0, min(1.0, d0[0] * d1[0] + d0[1] * d1[1]))
+        turn = math.acos(dot)
+        if turn < math.radians(12.0):
+            out.append(b)
+            continue
+        t_need = R * math.tan(turn / 2.0)
+        t_eff = min(t_need, 0.45 * l0, 0.45 * l1)
+        R_eff = t_eff / max(math.tan(turn / 2.0), 1e-9)
+        side = 1.0 if (d0[0] * d1[1] - d0[1] * d1[0]) > 0 else -1.0
+        T0 = (b[0] - d0[0] * t_eff, b[1] - d0[1] * t_eff)
+        n0 = (-d0[1] * side, d0[0] * side)
+        C = (T0[0] + n0[0] * R_eff, T0[1] + n0[1] * R_eff)
+        a0 = math.atan2(T0[1] - C[1], T0[0] - C[0])
+        nseg = max(2, int(math.ceil(R_eff * turn / 1.2)))
+        zb = b[2]
+        for j in range(nseg + 1):
+            ang = a0 + side * turn * j / nseg
+            out.append((C[0] + R_eff * math.cos(ang),
+                        C[1] + R_eff * math.sin(ang), zb))
+    if not closed:
+        out.append(pts[-1])
+    return out
+
+
+def _relax_stations(stations, R_lim, closed=False, iters=150):
+    """Curvature-limited Laplacian relaxation: any station whose local
+    circumradius is below R_lim eases toward its neighbours (endpoints
+    fixed on open paths -- they sit on junction interfaces). Directions
+    are recomputed from the relaxed positions."""
+    n = len(stations)
+    pts = [[s[0][0], s[0][1], s[2]] for s in stations]
+
+    def rad(i):
+        a = pts[(i - 1) % n]
+        b = pts[i]
+        c = pts[(i + 1) % n]
+        la = math.dist(a[:2], b[:2])
+        lb = math.dist(b[:2], c[:2])
+        lc = math.dist(c[:2], a[:2])
+        ar = abs((b[0] - a[0]) * (c[1] - a[1]) -
+                 (c[0] - a[0]) * (b[1] - a[1])) / 2.0
+        return (la * lb * lc) / (4.0 * ar) if ar > 1e-9 else 1e9
+
+    rng9 = range(n) if closed else range(1, n - 1)
+    for _it in range(iters):
+        moved = False
+        for i in rng9:
+            if rad(i) >= R_lim:
+                continue
+            a = pts[(i - 1) % n]
+            c = pts[(i + 1) % n]
+            for k in range(3):
+                pts[i][k] = pts[i][k] * 0.5 + (a[k] + c[k]) * 0.25
+            moved = True
+        if not moved:
+            break
+    out = []
+    for i in range(n):
+        if closed:
+            a = pts[(i - 1) % n]
+            c = pts[(i + 1) % n]
+        else:
+            a = pts[max(0, i - 1)]
+            c = pts[min(n - 1, i + 1)]
+        d = (c[0] - a[0], c[1] - a[1])
+        dl = max(math.hypot(*d), 1e-9)
+        out.append(((pts[i][0], pts[i][1]), (d[0] / dl, d[1] / dl),
+                    pts[i][2]))
+    return out
+
+
 def build_road_network(p, rng, context):
     """DESTRUCTIVE: consume the active edge-network mesh (skin-modifier
     radii = road half-widths) and replace it with ONE welded road mesh
@@ -1854,7 +1943,40 @@ def build_road_network(p, rng, context):
             continue
         if pa['closed'] and math.dist(pts[0][:2], pts[-1][:2]) < 1e-6:
             pts = pts[:-1]
+        # acute bends fold the swept ribbon: round them to the full
+        # cross-section half-width, then curvature-limit the stations
+        (n_s9, _nn9, y0r9, _m09, _m19, y1r9, _zp9,
+         _zr9) = _xsection(pa['lanes'], pa['lw'], 'none')
+        R_lim = y1r9 + GUT_W + CURB_W + GAP + sw + 0.8
+        pts = _fillet_polyline(pts, R_lim, pa['closed'])
         stations, Lt = _cr_stations(pts, 2.0, pa['closed'])
+        # relax + RESAMPLE rounds: relaxation alone bunches stations at a
+        # hairpin (Laplacian shrinkage) and the ribbon still folds; the
+        # Catmull-Rom resample restores uniform spacing each round
+        for _round in range(6):
+            stations = _relax_stations(stations, R_lim, pa['closed'])
+            worst = 1e9
+            n9 = len(stations)
+            rng9r = range(n9) if pa['closed'] else range(1, n9 - 1)
+            for i9 in rng9r:
+                a9 = stations[(i9 - 1) % n9][0]
+                b9 = stations[i9][0]
+                c9 = stations[(i9 + 1) % n9][0]
+                la9 = math.dist(a9, b9)
+                lb9 = math.dist(b9, c9)
+                lc9 = math.dist(c9, a9)
+                ar9 = abs((b9[0] - a9[0]) * (c9[1] - a9[1]) -
+                          (c9[0] - a9[0]) * (b9[1] - a9[1])) / 2.0
+                if ar9 > 1e-9:
+                    worst = min(worst, la9 * lb9 * lc9 / (4.0 * ar9))
+            pts2 = [(s[0][0], s[0][1], s[2]) for s in stations]
+            stations, Lt = _cr_stations(pts2, 2.0, pa['closed'])
+            if worst >= R_lim * 0.9:
+                break
+        cum9 = [0.0]
+        for (a9, b9) in zip(stations, stations[1:]):
+            cum9.append(cum9[-1] + math.dist(a9[0], b9[0]))
+        Lt = cum9[-1]
 
         def pin(idx, d_pin, z_pin, into):
             stations[idx] = (stations[idx][0], d_pin, z_pin)
