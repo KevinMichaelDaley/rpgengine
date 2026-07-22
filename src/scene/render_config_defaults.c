@@ -36,6 +36,7 @@ void render_config_defaults(render_config_t *rc)
     rc->dir_static_res = 1024; rc->dir_dynamic_res = 1024;
     rc->dir_lambda = 0.6f; rc->dir_bias = 0.05f; rc->dir_softness = 0.7f;
     rc->dir_max_distance = 0.0f; rc->dir_pcss = 0;
+    rc->dir_translucency = 1; rc->dir_caustics = 1;
 
     /* Point (cube) shadows. shadow_far = scene diag * far_scale. */
     rc->shadow_max = 8; rc->shadow_res = 256;

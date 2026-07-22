@@ -464,6 +464,8 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
         cfg.forward.dir_softness = rc.dir_softness;
         cfg.forward.dir_pcss = rc.dir_pcss;
         cfg.forward.dir_max_distance = rc.dir_max_distance;
+        cfg.forward.dir_translucency = rc.dir_translucency != 0;
+        cfg.forward.dir_caustics = rc.dir_caustics != 0;
         for (int a = 0; a < 3; ++a) {
             cfg.forward.shadow_scene_min[a] = amin[a] - 1.0f;
             cfg.forward.shadow_scene_max[a] = amax[a] + 1.0f;

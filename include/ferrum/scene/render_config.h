@@ -49,6 +49,11 @@ typedef struct render_config {
     uint32_t dir_static_res, dir_dynamic_res;
     float    dir_lambda, dir_bias, dir_softness, dir_max_distance;
     int      dir_pcss;
+    int      dir_translucency; /**< translucent casters -> tinted sun shadows
+                                *   via the CSM mask (rpg-29zj). Default 1. */
+    int      dir_caustics;     /**< SDF-traced caustic refinement of the mask
+                                *   (rpg-kbqd, GL 4.3; graceful fallback).
+                                *   Default 1. */
 
     /* Point (cube) shadows. */
     uint32_t shadow_max, shadow_res;

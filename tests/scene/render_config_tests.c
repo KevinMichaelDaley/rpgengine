@@ -221,6 +221,19 @@ static int test_json_overlay_partial(void)
     ASSERT_FLT_EQ(rc.sh_normal_bias, 0.9f);   /* default survives */
     ASSERT_INT_EQ(rc.shadow_res, 256);        /* default survives */
     ASSERT_FLT_EQ(rc.spec_gain, 1.0f);        /* default survives */
+    ASSERT_INT_EQ(rc.dir_translucency, 1);    /* default survives */
+    return 0;
+}
+
+static int test_translucency_overrides(void)
+{
+    /* Both transparent-shadow knobs can be forced off from the scene JSON. */
+    const char *j = "{ \"dir_translucency\": 0, \"dir_caustics\": 0 }";
+    render_config_t rc;
+    arena_reset_buf();
+    ASSERT_TRUE(render_config_parse(j, strlen(j), &g_arena, &rc));
+    ASSERT_INT_EQ(rc.dir_translucency, 0);
+    ASSERT_INT_EQ(rc.dir_caustics, 0);
     return 0;
 }
 
@@ -343,6 +356,7 @@ int main(void)
         { "new_keys_overlay",         test_new_keys_overlay },
         { "preset_files_load",        test_preset_files_load },
         { "json_overlay_partial",     test_json_overlay_partial },
+        { "translucency_overrides",   test_translucency_overrides },
         { "json_vec_fields",          test_json_vec_fields },
         { "json_empty_is_defaults",   test_json_empty_is_defaults },
         { "json_failure_modes",       test_json_failure_modes },

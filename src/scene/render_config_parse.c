@@ -61,6 +61,8 @@ bool render_config_parse(const char *json, size_t len, struct arena *arena,
     out->dir_softness     = sd_field_num(r, "dir_softness",   out->dir_softness);
     out->dir_max_distance = sd_field_num(r, "dir_max_distance", out->dir_max_distance);
     out->dir_pcss         = rc_field_i(r, "dir_pcss",         out->dir_pcss);
+    out->dir_translucency = rc_field_i(r, "dir_translucency", out->dir_translucency);
+    out->dir_caustics     = rc_field_i(r, "dir_caustics",     out->dir_caustics);
 
     /* Point (cube) shadows. */
     out->shadow_max       = rc_field_u(r, "shadow_max",       out->shadow_max);
