@@ -619,10 +619,55 @@ class _Wall:
 # The dingbat
 # ---------------------------------------------------------------------------
 
+#: PBR palette: name -> (base RGB, roughness, metallic). Values follow the
+#: standard PBR reference charts (Substance/Quixel): dielectrics metallic=0;
+#: galvanized steel/roll-up 1.0 at rough ~0.45-0.55; aged asphalt ~0.95;
+#: architectural glass rough ~0.08; enamel sign cabinets ~0.25; road paint
+#: semi-matte ~0.6; raw soil/sand fully rough.
+_MAT_PBR = {
+    "la_stucco":       ((0.74, 0.70, 0.62), 0.90, 0.0),
+    "la_trim":         ((0.85, 0.83, 0.78), 0.55, 0.0),
+    "la_glass":        ((0.28, 0.38, 0.40), 0.08, 0.0),
+    "la_concrete":     ((0.54, 0.54, 0.52), 0.85, 0.0),
+    "la_metal":        ((0.62, 0.64, 0.66), 0.45, 1.0),
+    "la_gypsum":       ((0.82, 0.80, 0.77), 0.95, 0.0),
+    "la_plywood":      ((0.55, 0.42, 0.28), 0.80, 0.0),
+    "la_resin":        ((0.80, 0.74, 0.62), 0.30, 0.0),
+    "la_sign_a":       ((0.72, 0.14, 0.10), 0.25, 0.0),
+    "la_sign_b":       ((0.10, 0.38, 0.52), 0.25, 0.0),
+    "la_sign_c":       ((0.86, 0.68, 0.18), 0.25, 0.0),
+    "la_shutter":      ((0.58, 0.60, 0.62), 0.55, 1.0),
+    "la_asphalt":      ((0.060, 0.060, 0.065), 0.95, 0.0),
+    "la_paint_white":  ((0.82, 0.82, 0.78), 0.60, 0.0),
+    "la_paint_yellow": ((0.78, 0.58, 0.10), 0.60, 0.0),
+    "la_patch":        ((0.035, 0.035, 0.040), 0.90, 0.0),
+    "la_sand":         ((0.76, 0.66, 0.48), 1.00, 0.0),
+    "la_scorch":       ((0.03, 0.03, 0.03), 0.95, 0.0),
+    "la_soil":         ((0.30, 0.23, 0.16), 1.00, 0.0),
+}
+
+
 def _material(name):
+    """Fetch-or-create a palette material, with its PBR values applied to
+    the Principled BSDF (the engine exporter reads tint/roughness/metallic
+    straight off it) and mirrored to the solid-viewport display."""
     m = bpy.data.materials.get(name)
     if m is None:
         m = bpy.data.materials.new(name)
+    pbr = _MAT_PBR.get(name)
+    if pbr is not None:
+        (col, rough, metal) = pbr
+        m.use_nodes = True
+        bsdf = next((n for n in m.node_tree.nodes
+                     if n.type == 'BSDF_PRINCIPLED'), None)
+        if bsdf is not None:
+            bsdf.inputs["Base Color"].default_value = (col[0], col[1],
+                                                       col[2], 1.0)
+            bsdf.inputs["Roughness"].default_value = rough
+            bsdf.inputs["Metallic"].default_value = metal
+        m.diffuse_color = (col[0], col[1], col[2], 1.0)
+        m.roughness = rough
+        m.metallic = metal
     return m
 
 

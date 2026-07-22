@@ -377,13 +377,15 @@ def export_material(mat, out_dir, tiles, res, bake=True):
            "normal_scale": 1.0, "uv_scale": [1.0, 1.0], "maps": {}}
 
     if name not in tiles:
-        # Solid material: pull flat tint + roughness straight off the Principled.
+        # Solid material: pull flat tint + roughness + metalness straight
+        # off the Principled.
         p = _principled(mat)
         if p:
             bc = p.inputs["Base Color"].default_value
             rec["tint"] = [float(bc[0]), float(bc[1]), float(bc[2])]
             r = p.inputs["Roughness"].default_value
             rec["roughness_min"] = rec["roughness_max"] = float(r)
+            rec["metalness"] = float(p.inputs["Metallic"].default_value)
         _write_json(os.path.join(out_dir, "materials", name + ".mat.json"), rec)
         return rec
 
