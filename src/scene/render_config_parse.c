@@ -82,6 +82,7 @@ bool render_config_parse(const char *json, size_t len, struct arena *arena,
     out->gi_bin_interval   = rc_field_i(r, "gi_bin_interval",   out->gi_bin_interval);
     out->gi_update_interval = rc_field_i(r, "gi_update_interval", out->gi_update_interval);
     out->gi_n_probe_groups = rc_field_i(r, "gi_n_probe_groups", out->gi_n_probe_groups);
+    out->gi_freeze_ticks = rc_field_i(r, "gi_freeze_ticks", out->gi_freeze_ticks);
     out->gi_smooth          = sd_field_num(r, "gi_smooth",         out->gi_smooth);
     out->gi_field       = rc_field_i(r, "gi_field",       out->gi_field);
     out->gi_mis         = rc_field_i(r, "gi_mis",         out->gi_mis);

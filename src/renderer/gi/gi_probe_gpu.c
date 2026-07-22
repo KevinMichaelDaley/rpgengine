@@ -1068,6 +1068,61 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     }
 }
 
+void gi_probe_gpu_readback(const gi_probe_gpu_t *g, float *sh, float *sg)
+{
+    if (g == NULL || g->n_probes == 0) return;
+    GLsizeiptr bytes = (GLsizeiptr)g->n_probes * 24 * (GLsizeiptr)sizeof(float);
+    if (sh != NULL) {
+        glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sh);
+        glGetBufferSubData(GI_GL_SHADER_STORAGE_BUFFER, 0, bytes, sh);
+    }
+    if (sg != NULL) {
+        glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sg);
+        glGetBufferSubData(GI_GL_SHADER_STORAGE_BUFFER, 0, bytes, sg);
+    }
+    glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+void gi_probe_gpu_upload_indexed(gi_probe_gpu_t *g, const uint32_t *idx,
+                                 const float *sh, const float *sg, uint32_t n)
+{
+    if (g == NULL || idx == NULL || n == 0) return;
+    /* Scatter each probe's 24 SH + 24 SG floats to its global slot. The @p idx
+     * are usually a spatial cluster (one SDF chunk), so coalesce contiguous
+     * runs into single glBufferSubData calls. */
+    for (uint32_t i = 0; i < n; ) {
+        uint32_t run = 1;
+        while (i + run < n && idx[i + run] == idx[i] + run) ++run;
+        GLintptr off = (GLintptr)idx[i] * 24 * (GLintptr)sizeof(float);
+        GLsizeiptr len = (GLsizeiptr)run * 24 * (GLsizeiptr)sizeof(float);
+        if (sh != NULL) {
+            glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sh);
+            glBufferSubData(GI_GL_SHADER_STORAGE_BUFFER, off, len, &sh[(size_t)i * 24]);
+        }
+        if (sg != NULL) {
+            glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sg);
+            glBufferSubData(GI_GL_SHADER_STORAGE_BUFFER, off, len, &sg[(size_t)i * 24]);
+        }
+        i += run;
+    }
+    glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, 0);
+}
+
+void gi_probe_gpu_upload(gi_probe_gpu_t *g, const float *sh, const float *sg)
+{
+    if (g == NULL || g->n_probes == 0) return;
+    GLsizeiptr bytes = (GLsizeiptr)g->n_probes * 24 * (GLsizeiptr)sizeof(float);
+    if (sh != NULL) {
+        glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sh);
+        glBufferSubData(GI_GL_SHADER_STORAGE_BUFFER, 0, bytes, sh);
+    }
+    if (sg != NULL) {
+        glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, g->b_sg);
+        glBufferSubData(GI_GL_SHADER_STORAGE_BUFFER, 0, bytes, sg);
+    }
+    glBindBuffer(GI_GL_SHADER_STORAGE_BUFFER, 0);
+}
+
 unsigned int gi_probe_gpu_sh_tbo(const gi_probe_gpu_t *g) { return g ? g->tbo_sh_tex : 0u; }
 unsigned int gi_probe_gpu_pos_tbo(const gi_probe_gpu_t *g) { return g ? g->tbo_pos_tex : 0u; }
 unsigned int gi_probe_gpu_depth_tbo(const gi_probe_gpu_t *g) { return g ? g->tbo_depth_tex : 0u; }

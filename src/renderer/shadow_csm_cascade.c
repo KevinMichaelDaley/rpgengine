@@ -46,28 +46,64 @@ static float csm_aabb_diag(const float wmin[3], const float wmax[3])
     return sqrtf(dx*dx + dy*dy + dz*dz);
 }
 
-uint32_t shadow_csm_cascade_of(const shadow_csm_t *csm,
-                               const render_renderable_t *r)
+/* The 8 corners of an AABB as vec3s. */
+static void csm_box_corners(const float mn[3], const float mx[3], vec3_t out[8])
 {
-    if (csm == NULL || r == NULL || r->mesh == NULL)
-        return 0;
-    /* Explicit per-caster tag wins (lets a caller force a cascade). */
-    if (r->shadow_cascade >= 0 && (uint32_t)r->shadow_cascade < csm->cascades)
-        return (uint32_t)r->shadow_cascade;
-    if (csm->cascades <= 1 || csm->size_log_max <= csm->size_log_min)
-        return csm->cascades ? csm->cascades - 1u : 0u;
-    /* Log-size -> [0, cascades-1]: small casters to the fine cascade 0, large
-     * "background" casters to the coarse last cascade. */
-    float wmin[3], wmax[3];
-    csm_world_aabb(r, wmin, wmax);
-    float d = csm_aabb_diag(wmin, wmax);
-    float lt = logf(d > 1e-6f ? d : 1e-6f);
-    float t = (lt - csm->size_log_min) / (csm->size_log_max - csm->size_log_min);
-    if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
-    int ci = (int)(t * (float)(csm->cascades - 1u) + 0.5f);
-    if (ci < 0) ci = 0;
-    if ((uint32_t)ci >= csm->cascades) ci = (int)csm->cascades - 1;
-    return (uint32_t)ci;
+    for (int c = 0; c < 8; ++c)
+        out[c] = (vec3_t){ (c&1)?mx[0]:mn[0], (c&2)?mx[1]:mn[1], (c&4)?mx[2]:mn[2] };
+}
+
+void shadow_csm_grid_dims(uint32_t n, float aspect,
+                          uint32_t *cols, uint32_t *rows)
+{
+    /* Never divide by zero downstream: an empty/uninit CSM tiles as 1x1. */
+    if (n == 0u) { if (cols) *cols = 1u; if (rows) *rows = 1u; return; }
+    if (aspect <= 0.0f) aspect = 1.0f;
+    /* Pick the factor pair (a x b == n) whose a/b is closest to the target
+     * aspect, so tiles stay square-ish and texel density is even. Compared in
+     * log space (ratio distance, symmetric for landscape vs portrait). A prime n
+     * has only 1xn / nx1, so it collapses to a strip along the longer axis. */
+    float target = logf(aspect);
+    uint32_t best_a = 1u, best_b = n;
+    float best_err = 1e30f;
+    for (uint32_t a = 1u; a <= n; ++a) {
+        if (n % a != 0u) continue;
+        uint32_t b = n / a;
+        float err = fabsf(logf((float)a / (float)b) - target);
+        if (err < best_err) { best_err = err; best_a = a; best_b = b; }
+    }
+    if (cols) *cols = best_a;
+    if (rows) *rows = best_b;
+}
+
+bool shadow_csm_caster_in_cascade(const shadow_csm_t *csm,
+                                  const render_renderable_t *r,
+                                  uint32_t cascade)
+{
+    if (csm == NULL || r == NULL || r->mesh == NULL || cascade >= csm->cascades)
+        return false;
+    /* Explicit per-caster tag wins: draw only into the tagged cascade. */
+    if (r->shadow_cascade >= 0)
+        return (uint32_t)r->shadow_cascade == cascade;
+    /* Light-space XY box of the caster's world AABB (a caster and the shadow it
+     * throws share this footprint in light space, so an XY overlap is enough). */
+    float wmn[3], wmx[3];
+    csm_world_aabb(r, wmn, wmx);
+    vec3_t cor[8]; csm_box_corners(wmn, wmx, cor);
+    float lx0 = 1e30f, ly0 = 1e30f, lx1 = -1e30f, ly1 = -1e30f;
+    for (int j = 0; j < 8; ++j) {
+        vec4_t p = mat4_mul_vec4(csm->light_view,
+                                 (vec4_t){ cor[j].x, cor[j].y, cor[j].z, 1.0f });
+        if (p.x < lx0) lx0 = p.x;
+        if (p.x > lx1) lx1 = p.x;
+        if (p.y < ly0) ly0 = p.y;
+        if (p.y > ly1) ly1 = p.y;
+    }
+    /* Overlap the tile rect padded by a small filter guard (matches the fit). */
+    const float g = 1.5f;
+    float tx0 = csm->tile_min[cascade][0] - g, tx1 = csm->tile_max[cascade][0] + g;
+    float ty0 = csm->tile_min[cascade][1] - g, ty1 = csm->tile_max[cascade][1] + g;
+    return !(lx1 < tx0 || lx0 > tx1 || ly1 < ty0 || ly0 > ty1);
 }
 
 /* Fit a texel-snapped orthographic light matrix to the light-space AABB of the 8
@@ -147,13 +183,6 @@ static void csm_fit_ortho(const vec3_t sc[8], vec3_t dir, vec3_t up, float res,
         *texel_world_out = 0.5f * (wx + wy) / res;
 }
 
-/* The 8 corners of an AABB as vec3s. */
-static void csm_box_corners(const float mn[3], const float mx[3], vec3_t out[8])
-{
-    for (int c = 0; c < 8; ++c)
-        out[c] = (vec3_t){ (c&1)?mx[0]:mn[0], (c&2)?mx[1]:mn[1], (c&4)?mx[2]:mn[2] };
-}
-
 void shadow_csm_update(shadow_csm_t *csm, const render_scene_t *scene,
                        const float light_dir[3],
                        const float scene_min[3], const float scene_max[3])
@@ -196,60 +225,63 @@ void shadow_csm_update(shadow_csm_t *csm, const render_scene_t *scene,
     float scene_diag = csm_aabb_diag(smin, smax);
     vec3_t scene_c[8]; csm_box_corners(smin, smax, scene_c);
 
-    /* --- Size range over the static casters (drives the classification). --- */
-    csm->size_log_min = 1e30f; csm->size_log_max = -1e30f;
-    for (uint32_t i = 0; i < to; ++i) {
-        if (scene->items[i].mesh == NULL) continue;
-        float wmn[3], wmx[3]; csm_world_aabb(&scene->items[i], wmn, wmx);
-        float lt = logf(fmaxf(csm_aabb_diag(wmn, wmx), 1e-6f));
-        if (lt < csm->size_log_min) csm->size_log_min = lt;
-        if (lt > csm->size_log_max) csm->size_log_max = lt;
-    }
-    if (csm->size_log_max < csm->size_log_min) { /* no casters */
-        csm->size_log_min = 0.0f; csm->size_log_max = 0.0f;
+    /* --- Shared light-space basis for tiling + caster classification. The eye
+     * is pulled back along -dir so the whole scene is in front (parallel proj:
+     * this only offsets depth). Every tile and every caster is projected through
+     * this ONE basis, so their light-space XY boxes are directly comparable. --- */
+    vec3_t scene_center = { 0.5f*(smin[0]+smax[0]), 0.5f*(smin[1]+smax[1]),
+                            0.5f*(smin[2]+smax[2]) };
+    vec3_t leye = vec3_sub(scene_center, vec3_scale(dir, scene_diag + 1.0f));
+    mat4_look_at(leye, scene_center, up, &csm->light_view);
+    mat4_t linv; mat4_inverse(csm->light_view, &linv);   /* light-space -> world. */
+
+    /* Scene light-space AABB: project the 8 world scene corners. */
+    float Lmin[3] = { 1e30f, 1e30f, 1e30f }, Lmax[3] = { -1e30f, -1e30f, -1e30f };
+    for (int j = 0; j < 8; ++j) {
+        vec4_t p = mat4_mul_vec4(csm->light_view,
+                                 (vec4_t){ scene_c[j].x, scene_c[j].y, scene_c[j].z, 1.0f });
+        float v[3] = { p.x, p.y, p.z };
+        for (int k = 0; k < 3; ++k) { if (v[k] < Lmin[k]) Lmin[k] = v[k];
+                                      if (v[k] > Lmax[k]) Lmax[k] = v[k]; }
     }
 
-    /* --- Per-cascade world AABB of the casters classified into it. --- */
-    float cmin[SHADOW_CSM_MAX_CASCADES][3], cmax[SHADOW_CSM_MAX_CASCADES][3];
-    int   chas[SHADOW_CSM_MAX_CASCADES] = { 0 };
-    for (uint32_t c = 0; c < csm->cascades; ++c)
-        for (int k = 0; k < 3; ++k) { cmin[c][k] = 1e30f; cmax[c][k] = -1e30f; }
-    for (uint32_t i = 0; i < to; ++i) {
-        const render_renderable_t *r = &scene->items[i];
-        if (r->mesh == NULL) continue;
-        uint32_t ci = shadow_csm_cascade_of(csm, r);
-        float wmn[3], wmx[3]; csm_world_aabb(r, wmn, wmx);
-        for (int k = 0; k < 3; ++k) {
-            if (wmn[k] < cmin[ci][k]) cmin[ci][k] = wmn[k];
-            if (wmx[k] > cmax[ci][k]) cmax[ci][k] = wmx[k];
-        }
-        chas[ci] = 1;
-    }
+    /* --- Grid the light-space XY extent into `cascades` tiles (closest to
+     * square for even texel density), each cascade fit to ONE tile. --- */
+    float Wx = Lmax[0] - Lmin[0], Wy = Lmax[1] - Lmin[1];
+    if (Wx < 1e-4f) Wx = 1e-4f;
+    if (Wy < 1e-4f) Wy = 1e-4f;
+    uint32_t cols = 1u, rows = 1u;
+    shadow_csm_grid_dims(csm->cascades, Wx / Wy, &cols, &rows);
+    float tw = Wx / (float)cols, th = Wy / (float)rows;
+    /* Filter guard: tiles overlap slightly so PCF taps and border casters have
+     * data on both sides of a tile seam (light space, so metres). */
+    float guard = 0.02f * ((tw < th) ? tw : th) + 1.0f;
 
-    /* --- Fit each cascade. Coarse last cascade = whole scene (background);
-     * finer cascades = their caster box + a shadow-throw margin, clamped to the
-     * scene by csm_fit_ortho. Empty cascades get a tiny valid (all-far) box. --- */
-    float margin = 0.10f * scene_diag;
     for (uint32_t c = 0; c < csm->cascades; ++c) {
-        float bmin[3], bmax[3];
-        if (c == csm->cascades - 1u || !chas[c]) {
-            /* Background / empty: cover the whole scene so every receiver can
-             * sample it (empty ones stay all-far, contributing no occlusion). */
-            for (int k = 0; k < 3; ++k) { bmin[k] = smin[k]; bmax[k] = smax[k]; }
-        } else {
-            for (int k = 0; k < 3; ++k) {
-                bmin[k] = cmin[c][k] - margin;
-                bmax[k] = cmax[c][k] + margin;
-            }
-        }
-        vec3_t sc[8]; csm_box_corners(bmin, bmax, sc);
+        uint32_t col = c % cols, row = c / cols;
+        float x0 = Lmin[0] + (float)col * tw, x1 = x0 + tw;
+        float y0 = Lmin[1] + (float)row * th, y1 = y0 + th;
+        /* Un-guarded rect drives caster classification (guard added there too). */
+        csm->tile_min[c][0] = x0; csm->tile_min[c][1] = y0;
+        csm->tile_max[c][0] = x1; csm->tile_max[c][1] = y1;
+        /* World corners of the guard-expanded tile x FULL scene light-space depth
+         * (every caster between light and receiver must render), then reuse the
+         * ortho fit (near-plane extension + texel snap). */
+        float gx0 = x0 - guard, gx1 = x1 + guard, gy0 = y0 - guard, gy1 = y1 + guard;
+        vec3_t sc[8]; int n = 0;
+        for (int zi = 0; zi < 2; ++zi) { float z = zi ? Lmax[2] : Lmin[2];
+        for (int yi = 0; yi < 2; ++yi) { float y = yi ? gy1 : gy0;
+        for (int xi = 0; xi < 2; ++xi) { float x = xi ? gx1 : gx0;
+            vec4_t w = mat4_mul_vec4(linv, (vec4_t){ x, y, z, 1.0f });
+            sc[n++] = (vec3_t){ w.x, w.y, w.z };
+        } } }
         csm_fit_ortho(sc, dir, up, (float)csm->static_res, scene_c,
                       &csm->view_proj[c], csm->eye[c], &csm->far_plane[c],
                       &csm->texel_world[c]);
         if (getenv("CSM_DEBUG"))
-            fprintf(stderr, "  cascade %u: %s box(%.1f,%.1f,%.1f)-(%.1f,%.1f,%.1f) far=%.1f\n",
-                    c, (c==csm->cascades-1u)?"scene":(chas[c]?"casters":"empty"),
-                    bmin[0],bmin[1],bmin[2], bmax[0],bmax[1],bmax[2], csm->far_plane[c]);
+            fprintf(stderr, "  tile %u: col%u row%u lx[%.1f,%.1f] ly[%.1f,%.1f] "
+                    "texel=%.3fm far=%.1f\n", c, col, row, x0, x1, y0, y1,
+                    csm->texel_world[c], csm->far_plane[c]);
     }
 
     /* --- Single dynamic map: fit to the whole scene so a dynamic caster

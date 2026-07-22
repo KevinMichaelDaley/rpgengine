@@ -220,6 +220,30 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
                            const int grid_dim[3], const float grid_origin[3],
                            const float grid_cell[3]);
 
+/**
+ * @brief Read the converged probe irradiance back to host RAM (for the offline
+ *        probe baker). @p sh and @p sg each receive n_probes * 24 floats (the
+ *        diffuse SH and specular SG coefficient sets the forward samples).
+ *        Either pointer may be NULL to skip it.
+ */
+void gi_probe_gpu_readback(const gi_probe_gpu_t *g, float *sh, float *sg);
+
+/**
+ * @brief Upload precomputed probe irradiance (from the baker) straight into the
+ *        SH/SG buffers -- the forward samples it with no runtime convergence.
+ *        @p sh / @p sg are n_probes * 24 floats each (NULL skips that buffer).
+ */
+void gi_probe_gpu_upload(gi_probe_gpu_t *g, const float *sh, const float *sg);
+
+/**
+ * @brief Scatter-upload precomputed SH/SG for a SUBSET of probes by GLOBAL
+ *        index (streamed per SDF chunk). @p idx[n] are probe indices; @p sh /
+ *        @p sg hold n*24 floats each in that order (NULL skips a buffer).
+ *        Contiguous index runs coalesce into single uploads.
+ */
+void gi_probe_gpu_upload_indexed(gi_probe_gpu_t *g, const uint32_t *idx,
+                                 const float *sh, const float *sg, uint32_t n);
+
 /** @brief The probe-SH texture buffer (samplerBuffer, R32F, 27/probe). */
 unsigned int gi_probe_gpu_sh_tbo(const gi_probe_gpu_t *g);
 /** @brief The probe-position texture buffer (samplerBuffer, RGBA32F). */

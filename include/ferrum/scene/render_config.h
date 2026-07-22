@@ -65,6 +65,7 @@ typedef struct render_config {
     uint32_t gi_max_lights, gi_max_boxes, gi_probe_min;
     float    gi_probe_sphere_margin;
     int      gi_bin_interval, gi_update_interval, gi_n_probe_groups;
+    int      gi_freeze_ticks; /**< bake+freeze probes after N ticks; 0 = keep updating. */
     float    gi_smooth;             /**< steady-state probe temporal-EMA blend (0..1;
                                      *   smaller = smoother/slower convergence). */
     /* Probe-GI tuning that used to be env-only (GI_*), rpg-2vfm. The GI_* vars are

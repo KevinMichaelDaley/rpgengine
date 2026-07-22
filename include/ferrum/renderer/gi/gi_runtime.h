@@ -46,6 +46,12 @@ typedef struct gi_runtime_config {
     const float *probe_pos_in;   /**< explicit probe positions (3/probe) for manual
                                   *   adaptive placement; NULL = seed a lattice. */
     uint32_t n_probe_in;         /**< count for @c probe_pos_in (0 = auto-seed). */
+    const float *baked_sh;       /**< precomputed probe SH (24/probe) from the offline
+                                  *   baker; NULL = converge at runtime. When present
+                                  *   (with @c baked_sg and n == n_probe_in) the field
+                                  *   is uploaded and FROZEN -- no runtime convergence. */
+    const float *baked_sg;       /**< precomputed probe SG (24/probe), pairs with baked_sh. */
+    uint32_t n_baked;            /**< probe count for @c baked_sh/@c baked_sg. */
     uint32_t max_probes;         /**< probe backing capacity for runtime updates via
                                   *   @ref gi_runtime_set_probes (streamed/per-zone
                                   *   probe sets, rpg-zygg); 0 => fixed at the init
@@ -59,6 +65,14 @@ typedef struct gi_runtime_config {
     int   n_probe_groups;        /**< stagger: spread the probe trace over N frames,
                                   *   a spatially-dithered 1/N slice each frame
                                   *   (0 -> update_interval; 1 = no stagger). */
+    int   freeze_ticks;          /**< BAKE-AND-FREEZE (0 = never, keep updating):
+                                  *   after this many update ticks the probe field
+                                  *   is converged for a static sun/world, so stop
+                                  *   dispatching the trace entirely -- the probe
+                                  *   buffers keep their baked SH and are only
+                                  *   SAMPLED (zero per-frame GI cost). Set
+                                  *   >= a few * n_probe_groups so every group has
+                                  *   traced + temporally settled first. */
     cluster_config_t froxel;     /**< MUST match the forward+ cluster config so
                                   *   probes bin into the exact same froxels. */
     uint32_t probe_min;          /**< guaranteed K-nearest probes per froxel (0 -> 4). */
@@ -103,6 +117,11 @@ typedef struct gi_runtime {
     float            smooth;          /**< steady-state temporal-EMA blend (0..1;
                                         *   smaller = smoother/slower). GI_SMOOTH. */
     int              frame_counter;
+    int              freeze_ticks;    /**< bake-and-freeze after N ticks (0 = off). */
+    int              frozen;          /**< 1 = probe field baked & frozen: the trace
+                                        *   no longer dispatches; buffers are sampled
+                                        *   as static data (freeze_ticks reached, or
+                                        *   precomputed SH loaded). */
     /* Per-object weights for the probe STATIC indirect (rpg-pau4). baked_w scales
      * it for lightmapped surfaces (small: extra bounce only); dyn_w for dynamic
      * objects (their only static ambience). Bound as forward+ uniforms. */
@@ -245,6 +264,29 @@ bool gi_runtime_set_bricks(gi_runtime_t *gi, const probe_brick_data_t *bd,
                            const probe_brick_index_t *ix);
 
 /** @brief Free everything. NULL-safe. */
+/** @brief Probe count of the resident set (for the offline baker). */
+uint32_t gi_runtime_probe_count(const gi_runtime_t *gi);
+
+/** @brief Read the converged probe irradiance to host RAM for baking:
+ *         @p sh / @p sg each receive probe_count * 24 floats (NULL skips). */
+void gi_runtime_readback(const gi_runtime_t *gi, float *sh, float *sg);
+
+/**
+ * @brief OFFLINE bake: directly touch every SDF chunk resident in turn (a
+ *        camera can't see interior chunks) and trace the probes in each to
+ *        convergence (@p iters dispatches/chunk). No display, no camera.
+ */
+void gi_runtime_bake_converge(gi_runtime_t *gi, const render_scene_t *scene,
+                              const char *sdf_prefix, int iters);
+
+/**
+ * @brief OFFLINE bake: read the converged probe irradiance back and write it
+ *        per SDF chunk to `<prefix>_cNNN.probesh` (each probe assigned to the
+ *        chunk box containing it), so it streams at runtime. Returns false if
+ *        nothing was written.
+ */
+bool gi_runtime_bake_write_probesh(const gi_runtime_t *gi, const char *prefix);
+
 void gi_runtime_destroy(gi_runtime_t *gi);
 
 #ifdef __cplusplus

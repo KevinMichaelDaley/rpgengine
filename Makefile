@@ -399,6 +399,7 @@ BIN_HEADLESS += build/gi_sdf_tests
 BIN_HEADLESS += build/gi_probe_kernel_tests
 BIN_HEADLESS += build/gi_probe_sample_tests
 BIN_HEADLESS += build/gi_probe_place_tests
+BIN_HEADLESS += build/shadow_csm_grid_tests
 BIN_HEADLESS += build/probe_brick_tests
 BIN_HEADLESS += build/probe_fixup_tests
 BIN_HEADLESS += build/probe_brick_index_tests
@@ -1180,6 +1181,11 @@ build/gl_constants_tests: tests/renderer/gl_constants_tests.c include/ferrum/ren
 # Shared frustum-cull helper unit + micro-benchmark (rpg-0rs4). Pure CPU math.
 build/frustum_cull_tests: tests/renderer/frustum_cull_tests.c src/renderer/cull/frustum_cull.c src/renderer/cull/sphere_cull.c src/math/mat4_proj.c src/math/mat4_look_at.c src/math/mat4_mul.c src/math/mat4_basic.c src/math/vec3.c | build
 	$(CC) $(CFLAGS) tests/renderer/frustum_cull_tests.c src/renderer/cull/frustum_cull.c src/renderer/cull/sphere_cull.c src/math/mat4_proj.c src/math/mat4_look_at.c src/math/mat4_mul.c src/math/mat4_basic.c src/math/vec3.c -o $@ -lm
+
+# Light-frustum cascade tiling math (rpg-shadow-tile). Headless: pure grid factor,
+# compiled with the CSM cascade module + math (no GL).
+build/shadow_csm_grid_tests: tests/renderer/shadow_csm_grid_tests.c src/renderer/shadow_csm_cascade.c $(MATH_SRC) | build
+	$(CC) $(CFLAGS) tests/renderer/shadow_csm_grid_tests.c src/renderer/shadow_csm_cascade.c $(MATH_SRC) -o $@ -lm
 
 # Probe placement + .probes file (rpg-ft0g). Headless: probe module + arena only.
 build/probe_tests: tests/probe/probe_tests.c $(PROBE_SRC) src/memory/arena_init.c src/memory/arena_alloc.c | build

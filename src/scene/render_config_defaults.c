@@ -48,6 +48,7 @@ void render_config_defaults(render_config_t *rc)
     rc->gi_max_lights = 512; rc->gi_max_boxes = 64; rc->gi_probe_min = 4;
     rc->gi_probe_sphere_margin = 1.2f; rc->gi_bin_interval = 1;
     rc->gi_update_interval = 8; rc->gi_n_probe_groups = 2;
+    rc->gi_freeze_ticks = 0;
     rc->gi_smooth = 0.15f;            /* steady probe temporal-EMA blend. */
     /* Probe-GI tuning (formerly GI_* env only). */
     rc->gi_field = 1; rc->gi_mis = 0; rc->gi_hybrid = 0; rc->gi_hero = 2;

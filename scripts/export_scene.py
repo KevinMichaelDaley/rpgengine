@@ -241,7 +241,9 @@ def _light_record(kind, name, position, direction, color, energy,
         rec["cone_inner_deg"] = outer_deg * (1.0 - float(spot_blend))
     if kind == "directional":
         # The sun: baked into the lightmap, opted into dynamic probe GI, shadowing.
-        rec["flags"] = ["baked", "dynamic_indirect", "shadow"]
+        # probe_gi: the sun must be a PROBE light so the offline probe bake (and
+        # runtime probe GI) gather its bounce -- without it the indirect is black.
+        rec["flags"] = ["baked", "dynamic_indirect", "shadow", "probe_gi"]
     else:
         # Dynamic punctual lights: realtime direct + gathered by the SDF-probe GI
         # (dynamic_indirect + probe_gi) for indirect bounce, like the hall demo's

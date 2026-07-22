@@ -5,14 +5,17 @@
  * The cascades are VIEW-INDEPENDENT: because the static map is baked once and
  * cached forever (the sun is stationary and the player may roam the whole
  * scene), fitting the cascades to the camera frustum would clip out casters
- * behind the view (a back wall would stop shadowing). Instead each STATIC caster
- * is classified into a cascade by SIZE / "background"-ness (see @ref
- * shadow_csm_cascade_of): big background structures (walls, vaults, floor) land
- * in a coarse cascade fit to the WHOLE scene, while smaller localised objects
- * land in finer cascades fit tightly to their own bounds (higher effective
- * resolution). At shade time a fragment samples EVERY cascade whose light box
- * contains it and takes the union of their occlusion, so a big-structure shadow
- * and a small-prop shadow both apply regardless of where the camera is.
+ * behind the view (a back wall would stop shadowing). Instead the cascades
+ * partition the LIGHT frustum SPATIALLY: the scene is projected into a shared
+ * light-space XY AABB, which is gridded into @ref cascades tiles (see @ref
+ * shadow_csm_grid_dims), each cascade fit to one small tile so its static_res
+ * texels give high ground density across the WHOLE scene, not just its centre.
+ * A caster renders into every tile its light-space XY box overlaps (see @ref
+ * shadow_csm_caster_in_cascade); in light space a caster and the shadow it
+ * throws share the same XY footprint, so no shadow-throw extension is needed.
+ * At shade time a fragment samples EVERY cascade whose light box contains it and
+ * takes the union of their occlusion, so tile borders (where the small filter
+ * guard overlaps two tiles) stay seamless regardless of where the camera is.
  *
  * Each cascade is shadowed by TWO co-sampled maps:
  *
@@ -98,12 +101,18 @@ typedef struct shadow_csm {
                                           cascade's mip LOD so cross-cascade
                                           samples align. */
 
-    /* Caster size -> cascade classification (natural-log of the world-AABB
-     * diagonal), computed over the static casters in shadow_csm_update and reused
-     * to place each caster in both the fit and the draw. Smallest size -> cascade
-     * 0 (finest); largest -> the last cascade (coarse, whole-scene background). */
-    float  size_log_min;
-    float  size_log_max;
+    /* Light-frustum tiling (rpg-7s4y). The cached directional map cannot
+     * follow the view, so it partitions the LIGHT frustum spatially: a shared
+     * light-space basis (@ref light_view) projects the scene into a light-space
+     * XY AABB, which is gridded into @ref cascades tiles. Each tile is one
+     * cascade -- fit to a SMALL slice of the scene so its static_res texels give
+     * high ground density everywhere, not just at the scene centre. A caster
+     * renders into every tile its light-space XY box overlaps (in light space a
+     * caster and the shadow it throws share the same XY footprint, so no
+     * shadow-throw extension is needed). Filled each @ref shadow_csm_update. */
+    mat4_t light_view;                              /**< shared classification basis. */
+    float  tile_min[SHADOW_CSM_MAX_CASCADES][2];    /**< light-space XY lo per tile. */
+    float  tile_max[SHADOW_CSM_MAX_CASCADES][2];    /**< light-space XY hi per tile. */
 
     mat4_t dyn_view_proj;    /**< single-face ortho matrix for the dynamic map. */
     float  dyn_eye[3];
@@ -181,15 +190,26 @@ void shadow_csm_update(shadow_csm_t *csm, const render_scene_t *scene,
                        const float scene_min[3], const float scene_max[3]);
 
 /**
- * @brief The cascade a caster is assigned to. Honours an explicit tag
- *        (@c renderable.shadow_cascade in [0,cascades)); otherwise classifies by
- *        the caster's world-AABB size against the range found in the last
- *        @ref shadow_csm_update (small -> fine cascade 0, large -> coarse last).
- *        Returns 0 before any classification. Used by both the fit and the draw
- *        so a caster always lands in the cascade its box was fit to include.
+ * @brief Factor @p n cascades into a @p cols x @p rows grid over a light frustum
+ *        of the given @p aspect (light-space width / height). Chooses the factor
+ *        pair of @p n closest to @p aspect (square-ish tiles => even texel
+ *        density); a prime @p n falls back to a single strip along the longer
+ *        axis. Guarded so @p n == 0 yields 1x1. Pure math (no GL); testable.
+ * @param cols  [out] tile columns (>=1). @param rows [out] tile rows (>=1).
  */
-uint32_t shadow_csm_cascade_of(const shadow_csm_t *csm,
-                               const render_renderable_t *r);
+void shadow_csm_grid_dims(uint32_t n, float aspect,
+                          uint32_t *cols, uint32_t *rows);
+
+/**
+ * @brief Whether static caster @p r must be drawn into cascade @p cascade, i.e.
+ *        its light-space XY box overlaps that tile's rect (plus a small filter
+ *        guard). Honours an explicit @c renderable.shadow_cascade tag (drawn only
+ *        into the tagged cascade). Valid only after @ref shadow_csm_update has
+ *        filled the tile rects; returns false for an out-of-range @p cascade.
+ */
+bool shadow_csm_caster_in_cascade(const shadow_csm_t *csm,
+                                  const render_renderable_t *r,
+                                  uint32_t cascade);
 
 /**
  * @brief Render every STATIC caster ([0, scene->dynamic_from)) into the static

@@ -70,7 +70,7 @@ static void mask_draw_items(shadow_csm_t *csm, const render_scene_t *scene,
         if (r->mesh == NULL)
             continue;
         if (cascade_filter >= 0 &&
-            shadow_csm_cascade_of(csm, r) != (uint32_t)cascade_filter)
+            !shadow_csm_caster_in_cascade(csm, r, (uint32_t)cascade_filter))
             continue;
         if (frustum_cull_aabb(planes, r->model, r->mesh->aabb_min,
                               r->mesh->aabb_max))

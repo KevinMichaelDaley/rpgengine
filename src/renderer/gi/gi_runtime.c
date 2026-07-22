@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "ferrum/renderer/gi/gi_probe_place.h"
+#include "ferrum/probe/probe_sh_file.h"
 #include "ferrum/renderer/light.h"
 #include "ferrum/renderer/light_store.h"
 
@@ -22,7 +23,7 @@
 #define GI_ZONE_END(v)
 #endif
 
-#define GI_MAX_PROBES 65536u
+#define GI_MAX_PROBES 300000u
 
 bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
 {
@@ -45,6 +46,10 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     { const char *e = getenv("GI_PROBE_GROUPS");
       if (e != NULL) { int v = atoi(e); if (v >= 1) gi->n_groups = v; } }
     if (gi->n_groups < 1) gi->n_groups = 1;
+    /* Bake-and-freeze horizon (0 = keep updating). GI_FREEZE env overrides. */
+    gi->freeze_ticks = cfg->freeze_ticks > 0 ? cfg->freeze_ticks : 0;
+    { const char *e = getenv("GI_FREEZE");
+      if (e != NULL) { int v = atoi(e); if (v >= 0) gi->freeze_ticks = v; } }
     /* Probe specular SG lobes summed per fragment (each = 8 corners * 2 texelFetch
      * + exp). 2 by default: ~all the fps of 1 lobe (26.2 vs 26.9, vs 22.9 for 3)
      * while keeping the multi-lobe quality 1 loses. GI_SG_LOBES overrides. */
@@ -209,6 +214,27 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
     }
     fprintf(stderr, "gi_runtime: %u probes, %d SDF chunks, accel %dx%dx%d\n",
             gi->probes.count, gi->sdf_ptr->n_chunks, gd[0], gd[1], gd[2]);
+
+    /* PRECOMPUTED probe irradiance from the offline baker: upload it straight
+     * into the SH/SG buffers and freeze -- zero runtime convergence, strong
+     * clean indirect (baked at high quality). Requires a matching probe count
+     * (same .probes order). Otherwise fall through to runtime convergence. */
+    if (gi->sdf_ptr != NULL && gi->sdf_ptr->has_probesh) {
+        /* Streamed baked SH: freeze now; the per-chunk SH uploads as chunks
+         * page in (above). The field appears progressively, like the lightmap. */
+        gi->frozen = 1;
+        fprintf(stderr, "gi_runtime: streamed BAKED probe SH -- frozen.\n");
+    } else if (cfg->baked_sh != NULL && cfg->baked_sg != NULL &&
+        cfg->n_baked == gi->probes.count) {
+        gi_probe_gpu_upload(&gi->gpu, cfg->baked_sh, cfg->baked_sg);
+        gi->frozen = 1;
+        fprintf(stderr, "gi_runtime: loaded BAKED probe SH (%u probes) -- frozen.\n",
+                cfg->n_baked);
+    } else if (cfg->baked_sh != NULL && cfg->n_baked != gi->probes.count) {
+        fprintf(stderr, "gi_runtime: baked SH probe count %u != %u -- ignoring, "
+                "will converge at runtime.\n", cfg->n_baked, gi->probes.count);
+    }
+
     gi->ready = true;
     return true;
 }
@@ -302,11 +328,39 @@ void gi_runtime_frame(gi_runtime_t *gi, const render_scene_t *scene,
      * refreshes every update_interval*n_groups frames. Fewer, larger ticks =
      * fewer flushes (faster) but bigger per-tick bursts; more, smaller ticks =
      * smoother. */
+    /* Streamed baked probe SH (piggybacked on the SDF chunk residency): each
+     * frame, push any chunk whose .probesh RAM is loaded but not yet on the GPU
+     * into the probe buffer. Runs even when frozen -- it is how the frozen field
+     * fills in as SDF chunks page by visibility (bounded RAM, like the lightmap). */
+    if (gi->sdf_ptr != NULL && gi->sdf_ptr->has_probesh) {
+        gi_sdf_stream_t *s = gi->sdf_ptr;
+        for (int c = 0; c < s->n_chunks; ++c) {
+            if (gi_sdf_stream_probes_uploaded(s, c)) continue;
+            const uint32_t *idx = NULL; const float *sh = NULL, *sg = NULL; uint32_t nc = 0;
+            if (!gi_sdf_stream_chunk_probes(s, c, &idx, &sh, &sg, &nc) || nc == 0) continue;
+            gi_probe_gpu_upload_indexed(&gi->gpu, idx, sh, sg, nc);
+            gi_sdf_stream_mark_probes_uploaded(s, c);
+        }
+    }
+
+    /* BAKE-AND-FREEZE: once the probe field has converged for a static sun/world
+     * (or precomputed SH was loaded / is streaming), stop dispatching entirely --
+     * the probe buffers keep their baked coefficients and are only sampled. Zero
+     * per-frame GI cost. gi_runtime_bind still binds the buffers each frame. */
+    if (gi->frozen)
+        { GI_ZONE_END(z_gif); return; }
     uint32_t frame = (uint32_t)gi->frame_counter++;
     if (frame % (uint32_t)gi->update_interval != 0)
         { GI_ZONE_END(z_gif); return; }
     uint32_t tick = frame / (uint32_t)gi->update_interval;
     int K = gi->n_groups > 1 ? gi->n_groups : 1;
+    /* Reached the freeze horizon? Do this final tick, then freeze from the next
+     * frame on. freeze_ticks should be >= a few * K so every group traced and
+     * the temporal EMA settled. */
+    if (gi->freeze_ticks > 0 && (int)tick >= gi->freeze_ticks) {
+        gi->frozen = 1;
+        fprintf(stderr, "gi_runtime: probe field FROZEN after %u ticks (baked).\n", tick);
+    }
     {
         /* Page the on-screen SDF chunks. Use the external (shared dual-prepass)
          * visible mask if the client provides one; else run the internal world
@@ -436,6 +490,205 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
     shader_uniform_set_float(cache, program, "u_gi_vis_bias", gi->vis_bias);
     shader_uniform_set_float(cache, program, "u_gi_vis_varmin", gi->vis_varmin);
     shader_uniform_set_float(cache, program, "u_gi_vis_sharp", gi->vis_sharp);
+}
+
+uint32_t gi_runtime_probe_count(const gi_runtime_t *gi)
+{
+    return gi != NULL ? gi->probes.count : 0u;
+}
+
+/* Nearest SDF chunk to a probe (0 distance if inside a box). Assigns EVERY
+ * probe to exactly one chunk so none is orphaned (probes in chunk padding /
+ * gaps still trace + stream). */
+static int bake_nearest_chunk(const gi_sdf_stream_t *s, const float *pos)
+{
+    int best = -1; float bestd = 1e30f;
+    for (int c = 0; c < s->n_chunks; ++c) {
+        float d2 = 0.0f;
+        for (int a = 0; a < 3; ++a) {
+            float mn = s->ram[c].origin[a];
+            float mx = mn + (float)s->ram[c].dims[a] * s->ram[c].voxel;
+            float v = pos[a] < mn ? mn - pos[a] : (pos[a] > mx ? pos[a] - mx : 0.0f);
+            d2 += v * v;
+        }
+        if (d2 < bestd) { bestd = d2; best = c; }
+    }
+    return best;
+}
+
+void gi_runtime_bake_converge(gi_runtime_t *gi, const render_scene_t *scene,
+                              const char *sdf_prefix, int iters)
+{
+    if (gi == NULL || scene == NULL || sdf_prefix == NULL ||
+        gi->sdf_ptr == NULL || gi->probes.count == 0)
+        return;
+    if (iters < 1) iters = 8;
+    gi_sdf_stream_t *s = gi->sdf_ptr;
+    /* Force ALL chunk SDF into RAM up front (the streamer normally pages it on
+     * a fiber; the bake is offline and can hold the whole set). Paging below
+     * then just uploads the resident subset to the GPU cache per chunk. */
+    int loaded = 0;
+    for (int c = 0; c < s->n_chunks; ++c)
+        if (gi_sdf_stream_chunk_load(s, c, sdf_prefix) > 0 || s->ram[c].dist != NULL)
+            ++loaded;
+    int saved_cap = s->max_uploads;
+    s->max_uploads = 0;   /* UNCAP: page must upload the whole neighbourhood per
+                           * chunk, else probe rays escape into empty slots. */
+    fprintf(stderr, "[bake] loaded %d/%d SDF chunks to RAM\n", loaded, s->n_chunks);
+    uint32_t np = gi->probes.count;
+    uint8_t *active = malloc(np);
+    uint8_t *visible = malloc((size_t)s->n_chunks);
+    if (active == NULL || visible == NULL) { free(active); free(visible); return; }
+
+    /* Gather the PROBE_GI lights once (the sun etc.); same as gi_runtime_frame.
+     * INDIRECT GAIN (GI_BAKE_GAIN) scales the traced radiance so the baked SH is
+     * bright at full precision -- doing this at BAKE time (not a runtime multiply
+     * on the sparse SH) avoids banding. */
+    float bake_gain = 1.0f;
+    { const char *e = getenv("GI_BAKE_GAIN"); if (e) { float v = (float)atof(e); if (v > 0.0f) bake_gain = v; } }
+    uint32_t nl = 0;
+    const render_light_store_t *ls = scene->lights;
+    if (ls != NULL) {
+        for (uint32_t i = 0; i < ls->count && nl < gi->max_lights; ++i) {
+            const render_light_t *L = &ls->lights[i];
+            if (!(L->flags & RENDER_LIGHT_FLAG_PROBE_GI)) continue;
+            gi_light_t *g = &gi->light_scratch[nl++];
+            g->kind = (L->kind == RENDER_LIGHT_DIRECTIONAL) ? GI_LIGHT_DIRECTIONAL
+                    : (L->kind == RENDER_LIGHT_SPOT) ? GI_LIGHT_SPOT : GI_LIGHT_POINT;
+            for (int a = 0; a < 3; ++a) { g->pos[a] = L->position[a]; g->dir[a] = L->direction[a]; }
+            for (int a = 0; a < 3; ++a) g->color[a] = L->color[a] * L->intensity * bake_gain;
+            g->range = L->range; g->cos_inner = L->cos_inner; g->cos_outer = L->cos_outer;
+        }
+    }
+    fprintf(stderr, "[bake] indirect gain %.1f, %u PROBE_GI light(s) in trace set\n",
+            bake_gain, nl);
+
+    /* DIRECTLY touch every chunk resident in turn (a top-down camera would miss
+     * interior chunks entirely) -- for each chunk, page it + its neighbours into
+     * the SDF cache, activate only the probes in its box, and trace them to
+     * convergence. They keep their SH as we move to the next chunk. */
+    for (int c = 0; c < s->n_chunks; ++c) {
+        float cmn[3], cmx[3], cen[3], ext = 0.0f;
+        for (int a = 0; a < 3; ++a) {
+            cmn[a] = s->ram[c].origin[a];
+            cmx[a] = cmn[a] + (float)s->ram[c].dims[a] * s->ram[c].voxel;
+            cen[a] = 0.5f * (cmn[a] + cmx[a]);
+            float e = cmx[a] - cmn[a]; if (e > ext) ext = e;
+        }
+        /* Load this chunk PLUS its immediate NEIGHBOURHOOD (chunks whose box is
+         * within ~half a chunk of this one), so probe rays that leave the chunk
+         * still hit real fine geometry instead of escaping early into the coarse
+         * zone -- which would leak or darken the near-field indirect. The
+         * resident pool caps the count; a flat sprawl's 3x3 neighbourhood fits.
+         * BAKE_NBR (metres) tunes the reach. */
+        static float nbr = -1.0f;
+        if (nbr < 0.0f) { const char *e = getenv("BAKE_NBR"); nbr = e ? (float)atof(e) : ext * 1.1f; }
+        int nvis = 0;
+        for (int d = 0; d < s->n_chunks; ++d) {
+            /* Box-to-box gap distance c<->d (0 if the boxes touch/overlap). */
+            float bd2 = 0.0f;
+            for (int a = 0; a < 3; ++a) {
+                float dmn = s->ram[d].origin[a];
+                float dmx = dmn + (float)s->ram[d].dims[a] * s->ram[d].voxel;
+                float g = (dmn > cmx[a]) ? (dmn - cmx[a])
+                        : (cmn[a] > dmx) ? (cmn[a] - dmx) : 0.0f;
+                bd2 += g * g;
+            }
+            visible[d] = (bd2 <= nbr * nbr) ? 1 : 0;
+            nvis += visible[d];
+        }
+        gi_sdf_stream_page(s, visible, cen);
+        if (c == 0)
+            fprintf(stderr, "[bake] chunk 0: %d visible, %d resident on GPU\n",
+                    nvis, s->resident);
+
+        uint32_t na = 0;
+        for (uint32_t p = 0; p < np; ++p) {
+            /* Trace probes ASSIGNED to this chunk (nearest) -- same criterion
+             * the writer uses, so every probe traces + is written (no orphans). */
+            active[p] = (bake_nearest_chunk(s, &gi->probe_pos[p * 3]) == c) ? 1 : 0;
+            na += active[p];
+        }
+        (void)cmn; (void)cmx;
+        if (na == 0) continue;
+        gi_probe_gpu_set_active(&gi->gpu, active, np);
+
+        for (int it = 0; it < iters; ++it) {
+            float temporal = (it == 0) ? 1.0f : gi->smooth;   /* replace then settle. */
+            gi_probe_gpu_dispatch(&gi->gpu, s, gi->light_scratch, nl, NULL, 0,
+                                  gi->soft_k, temporal, 1, 0, gi->probe_grid_dim,
+                                  gi->probe_grid_origin, gi->probe_grid_cell);
+        }
+        if ((c % 4) == 0)
+            fprintf(stderr, "[bake] chunk %d/%d (%u probes)\n", c, s->n_chunks, na);
+    }
+    /* Restore full activity + the upload cap for any subsequent runtime use. */
+    s->max_uploads = saved_cap;
+    memset(active, 1, np);
+    gi_probe_gpu_set_active(&gi->gpu, active, np);
+    free(active); free(visible);
+    fprintf(stderr, "[bake] converged %d chunks x %d iters\n", s->n_chunks, iters);
+}
+
+bool gi_runtime_bake_write_probesh(const gi_runtime_t *gi, const char *prefix)
+{
+    if (gi == NULL || prefix == NULL || gi->sdf_ptr == NULL || gi->probes.count == 0)
+        return false;
+    uint32_t np = gi->probes.count;
+    const gi_sdf_stream_t *s = gi->sdf_ptr;
+    /* Read the converged irradiance for every probe. */
+    float *sh = malloc((size_t)np * 24 * sizeof(float));
+    float *sg = malloc((size_t)np * 24 * sizeof(float));
+    /* Per-chunk scratch: indices + gathered SH/SG for probes in the chunk. */
+    uint32_t *cidx = malloc((size_t)np * sizeof(uint32_t));
+    float *csh = malloc((size_t)np * 24 * sizeof(float));
+    float *csg = malloc((size_t)np * 24 * sizeof(float));
+    (void)0;
+    if (!sh || !sg || !cidx || !csh || !csg) {
+        free(sh); free(sg); free(cidx); free(csh); free(csg);
+        return false;
+    }
+    gi_probe_gpu_readback(&gi->gpu, sh, sg);
+
+    /* Assign every probe to its NEAREST chunk (same criterion as the trace) so
+     * probes in padding / gaps are still written + will stream in -- no orphans. */
+    int *probe_chunk = malloc((size_t)np * sizeof(int));
+    if (probe_chunk == NULL) {
+        free(sh); free(sg); free(cidx); free(csh); free(csg);
+        return false;
+    }
+    for (uint32_t p = 0; p < np; ++p)
+        probe_chunk[p] = bake_nearest_chunk(s, &gi->probe_pos[p * 3]);
+
+    uint32_t total_written = 0;
+    int chunks_written = 0;
+    for (int c = 0; c < s->n_chunks; ++c) {
+        uint32_t nc = 0;
+        for (uint32_t p = 0; p < np; ++p) {
+            if (probe_chunk[p] != c) continue;
+            cidx[nc] = p;
+            memcpy(&csh[(size_t)nc * 24], &sh[(size_t)p * 24], 24 * sizeof(float));
+            memcpy(&csg[(size_t)nc * 24], &sg[(size_t)p * 24], 24 * sizeof(float));
+            ++nc;
+        }
+        if (nc == 0) continue;
+        char path[600];
+        snprintf(path, sizeof path, "%s_c%03u.probesh", prefix, (unsigned)s->scan_cc[c]);
+        if (probe_sh_chunk_save(path, nc, cidx, csh, csg)) {
+            total_written += nc; ++chunks_written;
+        }
+    }
+    free(probe_chunk);
+    fprintf(stderr, "gi_runtime: baked %u/%u probes across %d chunks\n",
+            total_written, np, chunks_written);
+    free(sh); free(sg); free(cidx); free(csh); free(csg);
+    return chunks_written > 0;
+}
+
+void gi_runtime_readback(const gi_runtime_t *gi, float *sh, float *sg)
+{
+    if (gi == NULL) return;
+    gi_probe_gpu_readback(&gi->gpu, sh, sg);
 }
 
 void gi_runtime_destroy(gi_runtime_t *gi)

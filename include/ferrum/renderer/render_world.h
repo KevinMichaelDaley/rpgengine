@@ -55,13 +55,16 @@ typedef struct render_world_config {
     const struct probe_brick_index *gi_brick_index; /**< rebuilt voxel index (with gi_bricks). */
     const float *gi_probe_pos;          /**< [gi_probe_count*3], copied by gi_runtime_init. */
     uint32_t     gi_probe_count;
+    const float *gi_baked_sh;           /**< [gi_probe_count*24] baked probe SH (NULL = converge). */
+    const float *gi_baked_sg;           /**< [gi_probe_count*24] baked probe SG. */
+    uint32_t     gi_baked_count;        /**< baked SH/SG probe count. */
     uint32_t     gi_max_probes;         /**< probe backing cap for runtime set-probe
                                          *   updates (streamed probes); 0 => fixed. */
     float        gi_grid_cell;
     int          gi_prepass_w, gi_prepass_h;
     uint32_t     gi_max_lights, gi_max_boxes;
     float        gi_soft_k;
-    int          gi_update_interval, gi_n_probe_groups;
+    int          gi_update_interval, gi_n_probe_groups, gi_freeze_ticks;
     float        gi_smooth;             /**< probe temporal-EMA blend (0 -> 0.15). */
     gi_probe_tuning_t gi_tuning;        /**< full probe-GI tuning from render_config. */
     uint32_t     gi_probe_min;

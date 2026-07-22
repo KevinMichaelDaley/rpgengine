@@ -14,6 +14,7 @@
 #include "ferrum/scene/render_config.h"
 #include "ferrum/renderer/gi/gi_sdf_stream.h"
 #include "ferrum/probe/probe_place.h"
+#include "ferrum/probe/probe_sh_file.h"
 #include "ferrum/memory/arena.h"
 #include "ferrum/lightmap/lm_atlas.h"
 #include "ferrum/editor/mesh/mesh_vao_format.h"
@@ -275,15 +276,20 @@ static void add_descriptor_lights(client_scene_t *cs, const scene_desc_t *desc)
 {
     for (uint32_t i = 0; i < desc->light_count; ++i) {
         const scene_desc_light_t *sl = &desc->lights[i];
-        /* Only REALTIME punctual (point/spot) lights belong in the forward+ store.
-         * The sun is a BAKED directional light: its direct term is
-         * cfg.forward.sun_dir/color + CSM and its indirect is the baked lightmap;
-         * feeding a directional light into the clustered punctual pack corrupts
-         * the froxel light grid and drops the point/spot lights (matches
-         * hall_lit_dynamic, whose store holds only the dynamic punctual lights). */
-        if (sl->kind == SCENE_DESC_LIGHT_DIRECTIONAL ||
-            sl->kind == SCENE_DESC_LIGHT_AREA ||
-            !(sl->flags & SCENE_DESC_LIGHT_FLAG_REALTIME))
+        /* The store feeds TWO consumers: the forward+ cluster (punctual realtime
+         * lights only -- it skips anything without FLAG_REALTIME, so a directional
+         * there is harmless) and the PROBE GI trace (gathers FLAG_PROBE_GI lights).
+         * So we must include the SUN (directional, probe_gi) here or the probe GI
+         * -- and the offline probe bake -- gather no light at all (black indirect).
+         * Skip only area lights and lights that are neither realtime-punctual nor
+         * a probe light. */
+        int realtime_punctual =
+            (sl->flags & SCENE_DESC_LIGHT_FLAG_REALTIME) &&
+            (sl->kind == SCENE_DESC_LIGHT_POINT || sl->kind == SCENE_DESC_LIGHT_SPOT);
+        int probe_light = (sl->flags & (SCENE_DESC_LIGHT_FLAG_PROBE_GI |
+                                        SCENE_DESC_LIGHT_FLAG_DYNAMIC_INDIRECT)) != 0;
+        if (sl->kind == SCENE_DESC_LIGHT_AREA ||
+            (!realtime_punctual && !probe_light))
             continue;
         render_light_t rl;
         memset(&rl, 0, sizeof rl);
@@ -501,6 +507,10 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
             }
         }
     }
+    /* Baked probe irradiance streams PER SDF CHUNK (<sdf_prefix>_cNNN.probesh):
+     * gi_sdf_stream detects + loads it alongside each SDF chunk, and gi_runtime
+     * uploads + freezes as chunks page in. No whole-file load here (a massive
+     * level can't hold it) -- it rides the same streaming pipeline as the SDF. */
     if (!probes_manual) {
         probe_place_grid(&probes, amin, amax, &pa, &pset);
         /* Probe-volume importance boxes densify chosen regions (distance/LOD),
@@ -586,6 +596,7 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     cfg.gi_bricks = have_bricks ? &brick_data : NULL;
     cfg.gi_brick_index = have_bricks ? &brick_index : NULL;
     cfg.gi_probe_pos = pset.positions; cfg.gi_probe_count = pset.count;
+    cfg.gi_baked_sh = cs->baked_sh; cfg.gi_baked_sg = cs->baked_sg; cfg.gi_baked_count = cs->baked_count;
     cfg.gi_max_probes = pset.count;   /* allow set_probes to restore the full set. */
     /* Keep a persistent copy of the full generated probe set so it can be streamed
      * down to the resident chunks each frame (client_scene_stream_probes). */
@@ -605,6 +616,7 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     cfg.gi_probe_min = rc.gi_probe_min; cfg.gi_probe_sphere_margin = rc.gi_probe_sphere_margin;
     cfg.gi_bin_interval = rc.gi_bin_interval;
     cfg.gi_update_interval = rc.gi_update_interval; cfg.gi_n_probe_groups = rc.gi_n_probe_groups;
+    cfg.gi_freeze_ticks = rc.gi_freeze_ticks;
     cfg.gi_smooth = rc.gi_smooth;
     /* Probe-GI tuning: config is the source of truth (GI_* env only overrides). */
     gi_probe_tuning_defaults(&cfg.gi_tuning);
@@ -777,6 +789,7 @@ void client_scene_destroy(client_scene_t *cs)
     if (!cs->sh_borrowed)
         for (int c = 0; c < 9; ++c) if (cs->sh_tex[c]) glDeleteTextures(1, &cs->sh_tex[c]);
     gi_static_volume_destroy(&cs->static_vol);
+    free(cs->baked_sh); free(cs->baked_sg);
     if (cs->gi_pp_ready) gi_vis_prepass_destroy(&cs->gi_pp);
     if (cs->vox_ready) gi_voxelize_destroy(&cs->vox);
     free(cs->dyn_idx); free(cs->dyn_albedo); free(cs->dyn_col);

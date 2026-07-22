@@ -68,6 +68,16 @@ typedef struct gi_sdf_stream {
                                     *   sdf_uploads_per_frame). */
     int                 uploads_this_page; /**< internal per-call budget counter. */
     int                 fp16;      /**< 1 = RGBA16F chunk textures (half the VRAM). */
+    /* Streamed BAKED probe SH, piggybacked on the SDF chunk residency (rpg-...):
+     * when a chunk's SDF loads, its `<prefix>_cNNN.probesh` (the probes in its
+     * box) loads too; on evict it frees. gi_runtime uploads a resident chunk's
+     * SH to the probe buffer once (cp_uploaded). NULL arrays = no baked SH. */
+    int                 has_probesh;          /**< 1 = per-chunk .probesh present. */
+    uint32_t          **cp_idx;               /**< [n_chunks] global probe indices (RAM). */
+    float             **cp_sh;                /**< [n_chunks] n*24 diffuse SH (RAM). */
+    float             **cp_sg;                /**< [n_chunks] n*24 specular SG (RAM). */
+    uint32_t           *cp_n;                 /**< [n_chunks] probe count per chunk. */
+    uint8_t            *cp_uploaded;          /**< [n_chunks] SH pushed to GPU this residency. */
     /* GLOBAL low-res ZONE SDF (page-fault fallback): always resident; sampled by
      * the probe trace wherever no fine chunk is bound, so rays NEVER see empty
      * space where geometry exists (light leak). Composed from the bake
@@ -112,6 +122,14 @@ void gi_sdf_stream_chunk_evict(gi_sdf_stream_t *s, int c);
 
 /** @brief 1 if chunk @p c's distance field is RAM-resident, else 0. */
 int gi_sdf_stream_chunk_loaded(const gi_sdf_stream_t *s, int c);
+
+/** @brief Get chunk @p c's loaded baked probe SH (NULL/0 if none). Borrowed. */
+int gi_sdf_stream_chunk_probes(const gi_sdf_stream_t *s, int c,
+                               const uint32_t **idx, const float **sh,
+                               const float **sg, uint32_t *n);
+/** @brief Query/set whether chunk @p c's SH has been pushed to the GPU. */
+int  gi_sdf_stream_probes_uploaded(const gi_sdf_stream_t *s, int c);
+void gi_sdf_stream_mark_probes_uploaded(gi_sdf_stream_t *s, int c);
 
 /** @brief World boxes (3 floats each) of the RAM-resident chunks, up to @p cap.
  *  Used to gate streamed probe sets to the loaded chunks. Returns the count. */

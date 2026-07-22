@@ -33,6 +33,7 @@ bool render_world_init(render_world_t *rw, const render_world_config_t *cfg)
         }
         gc.probe_pos_in = cfg->gi_probe_pos;
         gc.n_probe_in = cfg->gi_probe_count;
+        gc.baked_sh = cfg->gi_baked_sh; gc.baked_sg = cfg->gi_baked_sg; gc.n_baked = cfg->gi_baked_count;
         gc.max_probes = cfg->gi_max_probes;
         gc.grid_cell = cfg->gi_grid_cell;
         gc.prepass_w = cfg->gi_prepass_w;
@@ -46,6 +47,7 @@ bool render_world_init(render_world_t *rw, const render_world_config_t *cfg)
         gc.bin_interval = cfg->gi_bin_interval;
         gc.update_interval = cfg->gi_update_interval;
         gc.n_probe_groups = cfg->gi_n_probe_groups;
+        gc.freeze_ticks = cfg->gi_freeze_ticks;
         gc.smooth = cfg->gi_smooth;
         gc.tuning = cfg->gi_tuning;
         if (gi_runtime_init(&rw->gi, &gc)) {

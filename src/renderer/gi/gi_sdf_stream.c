@@ -11,6 +11,7 @@
 
 #include "ferrum/lightmap/lm_sdf_file.h"
 #include "ferrum/renderer/gi/gi_sdf.h"
+#include "ferrum/probe/probe_sh_file.h"
 
 static void zone_load(gi_sdf_stream_t *s, const char *prefix);
 
@@ -131,7 +132,19 @@ int gi_sdf_stream_scan(gi_sdf_stream_t *s, const char *prefix)
     s->ram = calloc((size_t)loaded, sizeof(gi_sdf_chunk_ram_t));
     s->page = malloc((size_t)loaded * sizeof(int));
     s->scan_cc = malloc((size_t)loaded * sizeof(int));
-    if (s->ram == NULL || s->page == NULL || s->scan_cc == NULL) { gi_sdf_stream_destroy(s); return -1; }
+    /* Streamed baked probe SH (rpg-...): per-chunk arrays, loaded on demand
+     * alongside the SDF chunk. Present only when the level was probe-baked. */
+    s->cp_idx = calloc((size_t)loaded, sizeof(uint32_t *));
+    s->cp_sh = calloc((size_t)loaded, sizeof(float *));
+    s->cp_sg = calloc((size_t)loaded, sizeof(float *));
+    s->cp_n = calloc((size_t)loaded, sizeof(uint32_t));
+    s->cp_uploaded = calloc((size_t)loaded, sizeof(uint8_t));
+    if (s->ram == NULL || s->page == NULL || s->scan_cc == NULL ||
+        s->cp_idx == NULL || s->cp_sh == NULL || s->cp_sg == NULL ||
+        s->cp_n == NULL || s->cp_uploaded == NULL) { gi_sdf_stream_destroy(s); return -1; }
+    { char pp[600]; snprintf(pp, sizeof pp, "%s_c000.probesh", prefix);
+      FILE *pf = fopen(pp, "rb"); if (pf) { s->has_probesh = 1; fclose(pf);
+        fprintf(stderr, "gi_sdf_stream: baked probe SH present -- streaming per chunk.\n"); } }
 
     /* Pass 2: fill per-chunk metadata (data loads on demand). */
     int c = 0, mx[3] = { 1, 1, 1 };
@@ -176,7 +189,20 @@ size_t gi_sdf_stream_chunk_load(gi_sdf_stream_t *s, int c, const char *prefix)
     if (!lm_sdf_load(path, &d)) return 0;
     s->ram[c].dist = d.dist; s->ram[c].albedo = d.albedo;
     size_t n = (size_t)s->ram[c].dims[0] * s->ram[c].dims[1] * s->ram[c].dims[2];
-    return n * sizeof(float) + (d.albedo != NULL ? n * 3u * sizeof(float) : 0u);
+    size_t bytes = n * sizeof(float) + (d.albedo != NULL ? n * 3u * sizeof(float) : 0u);
+    /* Piggyback the chunk's baked probe SH (loaded here on the same fiber,
+     * uploaded to the GPU by gi_runtime once the chunk is resident). */
+    if (s->has_probesh && s->cp_sh != NULL && s->cp_sh[c] == NULL) {
+        char pp[600]; snprintf(pp, sizeof pp, "%s_c%03u.probesh", prefix,
+                               (unsigned)s->scan_cc[c]);
+        uint32_t pn = 0, *pidx = NULL; float *psh = NULL, *psg = NULL;
+        if (probe_sh_chunk_load(pp, &pn, &pidx, &psh, &psg)) {
+            s->cp_idx[c] = pidx; s->cp_sh[c] = psh; s->cp_sg[c] = psg;
+            s->cp_n[c] = pn; s->cp_uploaded[c] = 0;
+            bytes += (size_t)pn * (sizeof(uint32_t) + 48u * sizeof(float));
+        }
+    }
+    return bytes;
 }
 
 void gi_sdf_stream_chunk_evict(gi_sdf_stream_t *s, int c)
@@ -186,6 +212,40 @@ void gi_sdf_stream_chunk_evict(gi_sdf_stream_t *s, int c)
     if (slot >= 0) { s->slot_chunk[slot] = -1; s->slot_used[slot] = -1; s->page[c] = -1; }
     free(s->ram[c].dist); s->ram[c].dist = NULL;
     free(s->ram[c].albedo); s->ram[c].albedo = NULL;
+    if (s->cp_idx != NULL) {
+        free(s->cp_idx[c]); s->cp_idx[c] = NULL;
+        free(s->cp_sh[c]);  s->cp_sh[c] = NULL;
+        free(s->cp_sg[c]);  s->cp_sg[c] = NULL;
+        s->cp_n[c] = 0; s->cp_uploaded[c] = 0;
+    }
+}
+
+int gi_sdf_stream_chunk_probes(const gi_sdf_stream_t *s, int c,
+                               const uint32_t **idx, const float **sh,
+                               const float **sg, uint32_t *n)
+{
+    if (s == NULL || s->cp_sh == NULL || c < 0 || c >= s->n_chunks ||
+        s->cp_sh[c] == NULL) {
+        if (n) *n = 0;
+        return 0;
+    }
+    if (idx) *idx = s->cp_idx[c];
+    if (sh) *sh = s->cp_sh[c];
+    if (sg) *sg = s->cp_sg[c];
+    if (n) *n = s->cp_n[c];
+    return 1;
+}
+
+int gi_sdf_stream_probes_uploaded(const gi_sdf_stream_t *s, int c)
+{
+    return (s != NULL && s->cp_uploaded != NULL && c >= 0 && c < s->n_chunks)
+               ? s->cp_uploaded[c] : 1;
+}
+
+void gi_sdf_stream_mark_probes_uploaded(gi_sdf_stream_t *s, int c)
+{
+    if (s != NULL && s->cp_uploaded != NULL && c >= 0 && c < s->n_chunks)
+        s->cp_uploaded[c] = 1;
 }
 
 int gi_sdf_stream_chunk_loaded(const gi_sdf_stream_t *s, int c)
@@ -340,6 +400,13 @@ void gi_sdf_stream_destroy(gi_sdf_stream_t *s)
     free(s->upload_rgba);
     free(s->page);
     free(s->scan_cc);
+    if (s->cp_idx != NULL) {
+        for (int c = 0; c < s->n_chunks; ++c) {
+            free(s->cp_idx[c]); free(s->cp_sh[c]); free(s->cp_sg[c]);
+        }
+    }
+    free(s->cp_idx); free(s->cp_sh); free(s->cp_sg);
+    free(s->cp_n); free(s->cp_uploaded);
     memset(s, 0, sizeof *s);
 }
 

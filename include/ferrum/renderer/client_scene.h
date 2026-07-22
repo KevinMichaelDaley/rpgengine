@@ -62,6 +62,9 @@ typedef struct client_scene {
     unsigned int         sh_tex[9];   /**< baked-lightmap SH coeff arrays (0 = none). */
     int                  sh_borrowed;  /**< 1 = sh_tex owned by the light streamer (don't delete). */
     gi_static_volume_t   static_vol;   /**< baked-irradiance volume for the probe GI. */
+    float               *baked_sh;     /**< owned: loaded baked probe SH (freed in destroy). */
+    float               *baked_sg;     /**< owned: loaded baked probe SG. */
+    uint32_t             baked_count;  /**< baked SH/SG probe count (0 = none). */
     float                static_k;     /**< probe static-term gain (render_config;
                                         *   reused by the streamed svol re-point). */
     float               *probe_pos_full;/**< full generated probe set [probe_count_full*3]. */

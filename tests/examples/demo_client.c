@@ -105,6 +105,9 @@
 /* ── Globals for signal handling ────────────────────────────────── */
 
 static volatile sig_atomic_t g_running = 1;
+static int g_bake_probes = 0;                    /* --bake-probes: converge + write .probesh. */
+static const char *g_bake_probes_path = NULL;    /* optional prefix override. */
+static char g_bake_prefix[1024];                 /* resolved <base>/<sdf_prefix> for the bake. */
 
 /* FR_GLDEBUG sink: print driver-reported GL errors (KHR_debug). */
 static void client_gl_debug_cb(unsigned src, unsigned type, unsigned id,
@@ -731,6 +734,19 @@ int main(int argc, char **argv) {
             level_path = argv[++i];
         } else if (strcmp(argv[i], "--bake") == 0 && i + 1 < argc) {
             bake_path = argv[++i];
+        } else if (strcmp(argv[i], "--bake-probes") == 0) {
+            /* Converge the probe GI then serialize per-chunk .probesh + exit.
+             * Force full-probe convergence (all probes each tick, never freeze,
+             * every frame) so an overhead sweep converges the whole level. */
+            g_bake_probes = 1;
+            if (i + 1 < argc && argv[i + 1][0] != '-') g_bake_probes_path = argv[++i];
+            /* Never freeze; trace every frame in BATCHES (staggered groups) so
+             * each bake frame stays cheap even at high probe density -- the
+             * whole level converges over many light frames, not few heavy ones.
+             * BAKE_GROUPS/BAKE_FRAMES tune it. */
+            setenv("GI_FREEZE", "0", 1);
+            setenv("GI_UPDATE", "1", 1);
+            { const char *g = getenv("BAKE_GROUPS"); setenv("GI_PROBE_GROUPS", g ? g : "16", 1); }
         }
 #ifdef FR_NET_EMULATION
         else if (strcmp(argv[i], "--emu-delay") == 0 && i + 1 < argc) {
@@ -954,6 +970,11 @@ int main(int argc, char **argv) {
                 cs_active = 1;
                 printf("[client] level '%s' loaded: %u objects, %u materials\n",
                        desc.name, desc.object_count, desc.material_count);
+                if (g_bake_probes_path)
+                    snprintf(g_bake_prefix, sizeof g_bake_prefix, "%s", g_bake_probes_path);
+                else
+                    snprintf(g_bake_prefix, sizeof g_bake_prefix, "%s/%s", base,
+                             desc.lightdata.sdf_prefix);
             } else {
                 fprintf(stderr, "[client] level load failed '%s'\n", level_path);
             }
@@ -1457,6 +1478,22 @@ int main(int argc, char **argv) {
             glViewport(0, 0, CLIENT_WIN_W, CLIENT_WIN_H);
             glClearColor(0.05f, 0.05f, 0.08f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+            /* --bake-probes: DIRECTLY touch every SDF chunk resident and trace
+             * its probes to convergence (no camera -- a top-down view can't see
+             * interior chunks), write per-chunk .probesh, and quit. One shot. */
+            if (g_bake_probes && cs_active) {
+                const char *ei = getenv("BAKE_ITERS");
+                int iters = ei ? atoi(ei) : 10;
+                fprintf(stderr, "[bake] converging %u probes, %d iters/chunk...\n",
+                        gi_runtime_probe_count(&cs.world.gi), iters);
+                gi_runtime_bake_converge(&cs.world.gi, &cs.scene, g_bake_prefix, iters);
+                glFinish();
+                bool ok = gi_runtime_bake_write_probesh(&cs.world.gi, g_bake_prefix);
+                fprintf(stderr, "[client] --bake-probes: %s (%s)\n",
+                        ok ? "wrote per-chunk .probesh" : "FAILED", g_bake_prefix);
+                g_running = 0;
+            }
 
             /* rpg-8302: render the static level via client_scene (real forward+ /
              * GI). Networked bodies draw on top with the inline pass below. */

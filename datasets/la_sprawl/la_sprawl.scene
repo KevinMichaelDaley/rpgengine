@@ -5745,7 +5745,8 @@
    "flags": [
     "baked",
     "dynamic_indirect",
-    "shadow"
+    "shadow",
+    "probe_gi"
    ]
   }
  ],
