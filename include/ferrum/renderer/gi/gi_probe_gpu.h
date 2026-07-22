@@ -82,7 +82,8 @@ typedef struct gi_probe_gpu {
              int static_origin, static_dim, static_vox;
              int sdf_active[GI_SDF_MAX_RESIDENT], sdf[GI_SDF_MAX_RESIDENT],
                  sdf_origin[GI_SDF_MAX_RESIDENT], sdf_dim[GI_SDF_MAX_RESIDENT],
-                 sdf_vox[GI_SDF_MAX_RESIDENT];
+                 sdf_vox[GI_SDF_MAX_RESIDENT], strans[GI_SDF_MAX_RESIDENT];
+             int sdf_alloc;
              int zone_on, zone_sdf, zone_origin, zone_dim, zone_vox;
              int cbrick_on, cbrick_index, cbrick_meta, cbrick_pidx, cbrick_valid,
                  cbrick_origin, cbrick_voxel, cbrick_dim; } loc;

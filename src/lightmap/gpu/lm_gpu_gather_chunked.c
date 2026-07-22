@@ -60,6 +60,36 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
         return false;
     }
 
+    /* Per-chunk SDF resolution: a chunk containing GLASS (a translucent mesh)
+     * bakes at a FINER grid so window openings resolve as distinct voxels --
+     * otherwise the v3 transmission channel can't separate the glass from its
+     * opaque frame (they share a coarse voxel -> reads opaque -> no light in).
+     * Precompute each translucent mesh's world AABB; a chunk overlapping any gets
+     * fine_dim. (Building-AABB-driven selection is the follow-up rpg-zw99.) */
+    int base_dim = getenv("LM_NEAR_DIM") ? atoi(getenv("LM_NEAR_DIM")) : 128;
+    int fine_dim = getenv("LM_NEAR_DIM_FINE") ? atoi(getenv("LM_NEAR_DIM_FINE"))
+                                              : base_dim * 2;
+    if (base_dim < 16) base_dim = 16;
+    if (fine_dim < base_dim) fine_dim = base_dim;
+    uint32_t n_glass = 0;
+    float *glass_aabb = malloc((size_t)scene->n_meshes * 6u * sizeof(float));
+    if (glass_aabb != NULL) {
+        for (uint32_t mi = 0; mi < scene->n_meshes; ++mi) {
+            const lm_mesh_t *me = &scene->meshes[mi];
+            if (me->opacity >= 0.999f || me->positions == NULL || me->vert_count == 0)
+                continue;
+            float *bx = &glass_aabb[n_glass * 6u];
+            bx[0] = bx[1] = bx[2] = 1e30f; bx[3] = bx[4] = bx[5] = -1e30f;
+            for (uint32_t v = 0; v < me->vert_count; ++v)
+                for (int a = 0; a < 3; ++a) {
+                    float p = me->positions[v * 3u + (uint32_t)a];
+                    if (p < bx[a]) bx[a] = p;
+                    if (p > bx[3 + a]) bx[3 + a] = p;
+                }
+            ++n_glass;
+        }
+    }
+
     /* Assign each luxel to the near chunk its position falls in. */
     for (uint32_t i = 0; i < nlux; ++i) {
         vec3_t p = lm->luxels[i].pos;
@@ -116,11 +146,22 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
                     (int)sizeof sdf_path)
                 chunk_sdf = sdf_path;
 
+            /* Fine res iff this chunk's outer box overlaps any glass mesh. */
+            int chunk_dim = base_dim;
+            for (uint32_t g = 0; g < n_glass; ++g) {
+                const float *bx = &glass_aabb[g * 6u];
+                if (bx[0] <= nouter.max.x && bx[3] >= nouter.min.x &&
+                    bx[1] <= nouter.max.y && bx[4] >= nouter.min.y &&
+                    bx[2] <= nouter.max.z && bx[5] >= nouter.min.z) {
+                    chunk_dim = fine_dim; break;
+                }
+            }
+
             lm_lightmap_t sub = { tlux, m, 1 };
             ok = lm_gpu_gather_run(&sub, sacc, &csvo, scene, &nouter,
                                    has_far ? &farfield : NULL, lights, n_lights, sky,
                                    transition, maxdist, samples, bounces, seed,
-                                   chunk_sdf);
+                                   chunk_sdf, chunk_dim);
             npc_svo_grid_destroy(&csvo);
             if (!ok)
                 break;
@@ -135,5 +176,6 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
     }
 
     free(chunk_of); free(farcell); free(idx); free(tlux); free(sacc);
+    free(glass_aabb);
     return ok;
 }

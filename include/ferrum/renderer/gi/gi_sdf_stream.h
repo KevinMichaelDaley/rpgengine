@@ -39,13 +39,16 @@ typedef struct gi_sdf_chunk_ram {
     float   origin[3];   /**< world min corner of the chunk box. */
     float  *dist;        /**< dims product floats (owned). */
     float  *albedo;      /**< v2: dims product * 3 RGB (owned); NULL for v1 chunks. */
+    float  *trans;       /**< v3: dims product transmission (0=opaque..1=clear glass,
+                          *   owned); NULL for v1/v2 chunks (treated as opaque). */
 } gi_sdf_chunk_ram_t;
 
 /** Streaming residency for the scene's baked SDF chunks. */
 typedef struct gi_sdf_stream {
     int                 n_chunks;
     gi_sdf_chunk_ram_t *ram;                        /**< [n_chunks] host cache. */
-    unsigned int        tex[GI_SDF_MAX_RESIDENT];   /**< resident R32F 3D textures. */
+    unsigned int        tex[GI_SDF_MAX_RESIDENT];   /**< resident RGBA (albedo+dist) 3D textures. */
+    unsigned int        tex_trans[GI_SDF_MAX_RESIDENT]; /**< resident R (transmission) 3D textures. */
     int                 slot_chunk[GI_SDF_MAX_RESIDENT]; /**< layer -> chunk (-1). */
     int                 slot_used[GI_SDF_MAX_RESIDENT];  /**< LRU frame stamp. */
     int                *page;                        /**< [n_chunks] chunk -> slot (-1). */
@@ -53,6 +56,7 @@ typedef struct gi_sdf_stream {
     int                 resident;                    /**< resident chunk count this frame. */
     int                 resident_slot[GI_SDF_MAX_RESIDENT]; /**< the resident slots this frame. */
     float              *upload_rgba;                  /**< scratch: interleave dist+albedo -> RGBA. */
+    float              *upload_trans;                 /**< scratch: per-voxel transmission upload. */
     int                 slot_dims[3];                 /**< allocated 3D-texture dims (max chunk). */
     int                *scan_cc;                       /**< [n_chunks] source file index (on-demand load). */
     int                 n_slots;   /**< resident GPU slots in use (1..MAX; 0 -> 8).

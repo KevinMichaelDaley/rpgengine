@@ -37,7 +37,9 @@ typedef struct lm_sdf_data {
     float   voxel;     /**< Cell edge length (metres). */
     float   origin[3]; /**< World-space minimum corner. */
     float  *dist;      /**< dims.x*dims.y*dims.z floats, x fastest (owned). */
-    float  *albedo;    /**< v2 only: dims product * 3 floats (RGB), else NULL (owned). */
+    float  *albedo;    /**< v2+ only: dims product * 3 floats (RGB), else NULL (owned). */
+    float  *trans;     /**< v3 only: dims product floats, per-voxel transmission
+                        *   (0 = opaque .. 1 = clear glass), else NULL (owned). */
 } lm_sdf_data_t;
 
 /**
@@ -57,6 +59,17 @@ bool lm_sdf_save(const char *path, const int32_t dims[3], float voxel,
 bool lm_sdf_save_rgba(const char *path, const int32_t dims[3], float voxel,
                       const float origin[3], const float *dist,
                       const float *albedo);
+
+/**
+ * @brief Write distance + per-voxel RGB albedo + per-voxel TRANSMISSION (v3).
+ *        @p trans holds dims product floats (0 = opaque .. 1 = clear glass), same
+ *        planar layout as @p dist. If @p trans is NULL this degrades to v2 (RGBA).
+ *        Loads back through @ref lm_sdf_load (sets @c out->albedo + @c out->trans).
+ *        @p albedo must be non-NULL; same error semantics as @ref lm_sdf_save.
+ */
+bool lm_sdf_save_rgbat(const char *path, const int32_t dims[3], float voxel,
+                       const float origin[3], const float *dist,
+                       const float *albedo, const float *trans);
 
 /**
  * @brief Load an @c .sdf file into @p out (allocates @c out->dist). Returns

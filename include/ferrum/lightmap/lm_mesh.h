@@ -42,6 +42,9 @@ typedef struct lm_mesh {
     const lm_image_t *emissive_image; /**< emissive texture (nullable). */
     vec3_t          albedo;    /**< tint/fallback reflectance. */
     vec3_t          emissive;  /**< tint/fallback emission. */
+    float           opacity;   /**< 1 = opaque (default); <1 = translucent (glass).
+                                *   Stamped into the SDF transmission channel so probe
+                                *   rays can pass through windows into interiors. */
     uint16_t        material;  /**< SVO material id (for far-field reflectors). */
     uint32_t        lightmap_resolution; /**< atlas rect size in texels. */
 } lm_mesh_t;

@@ -157,9 +157,11 @@ static uint32_t client_bake_meshes(client_bake_ctx_t *c, arena_t *arena,
          * probe bounce lost its colour (a red banner bled grey). Textured materials
          * keep tint as a multiplier over the albedo image. */
         lm->albedo = (vec3_t){ 1.0f, 1.0f, 1.0f };
+        lm->opacity = 1.0f;
         if (mi >= 0 && (uint32_t)mi < d->material_count) {
             const float *t = d->materials[mi].tint;
             lm->albedo = (vec3_t){ t[0], t[1], t[2] };
+            lm->opacity = d->materials[mi].opacity;   /* glass -> SDF transmission. */
         }
         lm->emissive = (vec3_t){ 0.0f, 0.0f, 0.0f };
         lm->material = 0;

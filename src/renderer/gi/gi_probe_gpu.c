@@ -59,8 +59,10 @@ static const char *CS_SRC =
     "uniform int u_hybrid;\n"
     "uniform int u_hero;\n"          /* number of hero SDF marches (0..4). */
     "uniform sampler3D u_sdf[16];\n"
+    "uniform sampler3D u_strans[16];\n" /* per-voxel transmission (0 opaque..1 glass). */
     "uniform vec3 u_sdf_origin[16];\n"
-    "uniform vec3 u_sdf_dim[16];\n"
+    "uniform vec3 u_sdf_dim[16];\n"     /* per-chunk filled dims (bounds test). */
+    "uniform vec3 u_sdf_alloc;\n"       /* allocated texture dims (all slots share; normalizes uvw). */
     "uniform float u_sdf_vox[16];\n"
     "uniform int u_sdf_active[16];\n"
     /* GLOBAL low-res ZONE SDF: the page-fault fallback. Sampled wherever no fine\n"
@@ -147,7 +149,7 @@ static const char *CS_SRC =
     "  for(int i=0;i<16;++i){ if(u_sdf_active[i]==0) continue;\n"
     "    vec3 g=(p-u_sdf_origin[i])/u_sdf_vox[i];\n"
     "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
-    "      cov=true; vec3 uvw=(g+0.5)/u_sdf_dim[i]; d=min(d, texture(u_sdf[i],uvw).a); } }\n"
+    "      cov=true; vec3 uvw=(g+0.5)/u_sdf_alloc; d=min(d, texture(u_sdf[i],uvw).a); } }\n"
     /* PAGE FAULT: no resident fine chunk covers p -> the coarse zone field keeps\n"
      * occlusion alive instead of returning empty space. */
     "  if(!cov && u_zone_on!=0){ vec3 g=(p-u_zone_origin)/u_zone_vox;\n"
@@ -161,6 +163,15 @@ static const char *CS_SRC =
     "    else if(bk==0) d=min(d, length(p-bx[i*2].xyz)-bx[i*2+1].w);\n"
     "    else d=min(d, box_sdf(p,bx[i*2].xyz,bx[i*2+1].xyz)); }\n"
     "  return d; }\n"
+    /* Per-voxel TRANSMISSION at p (0 = opaque .. 1 = clear glass): max over the\n"
+     * resident chunks covering p (0 where none cover -> opaque). Lets the shadow\n"
+     * march roll a stochastic pass-through at glass surfaces. */
+    "float scene_trans(vec3 p){ float tr=0.0;\n"
+    "  for(int i=0;i<16;++i){ if(u_sdf_active[i]==0) continue;\n"
+    "    vec3 g=(p-u_sdf_origin[i])/u_sdf_vox[i];\n"
+    "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
+    "      vec3 uvw=(g+0.5)/u_sdf_alloc; tr=max(tr, texture(u_strans[i],uvw).r); } }\n"
+    "  return tr; }\n"
     /* Voxelised static albedo at p, sampled at mip @p lod (cone footprint). Dynamic\n"
      * collider boxes have no baked albedo -> neutral grey fallback. */
     /* Dynamic albedo lookup: rgb = injected albedo, a = coverage (0 = no dynamic
@@ -180,7 +191,7 @@ static const char *CS_SRC =
     "  for(int i=0;i<16;++i){ if(u_sdf_active[i]==0) continue;\n"
     "    vec3 g=(p-u_sdf_origin[i])/u_sdf_vox[i];\n"
     "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_sdf_dim[i]))){\n"
-    "      vec3 uvw=(g+0.5)/u_sdf_dim[i]; return textureLod(u_sdf[i],uvw,lod).rgb; } }\n"
+    "      vec3 uvw=(g+0.5)/u_sdf_alloc; return textureLod(u_sdf[i],uvw,lod).rgb; } }\n"
     /* Page-fault albedo: the zone field's nearest-surface colour beats flat grey. */
     "  if(u_zone_on!=0){ vec3 g=(p-u_zone_origin)/u_zone_vox;\n"
     "    if(all(greaterThanEqual(g,vec3(0.0)))&&all(lessThan(g,u_zone_dim))){\n"
@@ -202,9 +213,22 @@ static const char *CS_SRC =
     "  vec4 r=vec4(0.0); if(abs(sd)<u_norm_gate){ r=vec4(sdf_normal(o),1.0); } pnrm[gid]=r; }\n"
     "vec4 probe_normal(uint gid){ return pnrm[gid]; }\n"
     /* Hard-ish shadow ray (sphere-march) from a surface point to a light. */
+    /* PCG-ish hash RNG (relocated ahead of shadow() so it can roll glass
+     * pass-through); returns [0,1). */
+    "float rnd(inout uint s){ s=s*747796405u+2891336453u; uint w=((s>>((s>>28)+4u))^s)*277803737u; w=(w>>22)^w; return float(w)*2.3283064365e-10; }\n"
+    /* Sun/light visibility ray (sphere-march). On a surface hit it rolls the\n"
+     * per-voxel TRANSMISSION: opaque (tr~0) or a failed roll blocks the ray; a\n"
+     * passing roll steps PAST the thin glass and keeps marching, so windows admit\n"
+     * a stochastic fraction of the light into interiors (converges over the bake's\n"
+     * many samples/iterations). */
     "float shadow(vec3 o,vec3 dir,float maxd){ float res=1.0,t=0.08;\n"
-    "  for(int i=0;i<32 && t<maxd;++i){ float h=scene_sdf(o+dir*t);\n"
-    "    if(h<0.02) return 0.0; res=min(res,u_soft*h/t); t+=clamp(h,0.03,0.4); }\n"
+    "  uint rng=floatBitsToUint(o.x)*73856093u ^ floatBitsToUint(o.y)*19349663u\n"
+    "          ^ floatBitsToUint(o.z)*83492791u ^ uint(u_seed)*2654435761u;\n"
+    "  for(int i=0;i<48 && t<maxd;++i){ vec3 p=o+dir*t; float h=scene_sdf(p);\n"
+    "    if(h<0.02){ float tr=scene_trans(p);\n"
+    "      if(tr<0.004 || rnd(rng)>=tr) return 0.0;\n"          /* opaque / roll fails -> blocked. */
+    "      t += 2.0*u_sdf_vox[0] + 0.05; continue; }\n"          /* passed the glass: skip past it. */
+    "    res=min(res,u_soft*h/t); t+=clamp(h,0.03,0.4); }\n"
     "  return clamp(res,0.0,1.0); }\n"
     /* Distance along dir at which a CONE of footprint-slope k (radius = k*t) is\n"
      * first blocked by the SDF (clearance h < k*t). k=0 -> a plain ray (exact hit\n"
@@ -262,8 +286,6 @@ static const char *CS_SRC =
     "  if(dist<=mean+0.15) return 1.0;\n"
     "  float var=max(pdepth[di+1]-mean*mean,1e-3); float d=dist-mean; float ch=var/(var+d*d);\n"
     "  return clamp(ch*ch,0.0,1.0); }\n"
-    /* PCG-ish hash RNG (per probe x sample x frame); returns [0,1). */
-    "float rnd(inout uint s){ s=s*747796405u+2891336453u; uint w=((s>>((s>>28)+4u))^s)*277803737u; w=(w>>22)^w; return float(w)*2.3283064365e-10; }\n"
     /* Cone-trace the SDF from the probe along dir; at the hit, return the diffuse\n"
      * radiance the surface bounces back toward the probe. Miss -> 0 (no sky).\n"
      * @p rdyn = DYNAMIC-light bounce, @p rstat = baked STATIC (lightmap) bounce --\n"
@@ -679,7 +701,9 @@ bool gi_probe_gpu_init(gi_probe_gpu_t *g, const gl_loader_t *loader,
             snprintf(nm, sizeof nm, "u_sdf_origin[%d]", i); g->loc.sdf_origin[i] = glGetUniformLocation(p, nm);
             snprintf(nm, sizeof nm, "u_sdf_dim[%d]", i);    g->loc.sdf_dim[i]    = glGetUniformLocation(p, nm);
             snprintf(nm, sizeof nm, "u_sdf_vox[%d]", i);    g->loc.sdf_vox[i]    = glGetUniformLocation(p, nm);
+            snprintf(nm, sizeof nm, "u_strans[%d]", i);     g->loc.strans[i]     = glGetUniformLocation(p, nm);
         }
+        g->loc.sdf_alloc = glGetUniformLocation(p, "u_sdf_alloc");
     }
     g->max_lights = max_lights ? max_lights : 1u;
     g->max_boxes = max_boxes ? max_boxes : 1u;
@@ -938,7 +962,7 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     /* Static irradiance volume: bound past the SDF slot units. */
     {
         int on = (g->static_tex != 0) ? 1 : 0;
-        int unit = GI_SDF_UNIT_BASE + GI_SDF_MAX_RESIDENT; /* first unit after the SDF chunks. */
+        int unit = GI_SDF_UNIT_BASE + 2 * GI_SDF_MAX_RESIDENT; /* first unit after the SDF chunks. */
         glUniform1i(g->loc.static_on, on);
         glUniform1f(g->loc.static_k, g->static_k);
         glUniform1i(g->loc.static_irr, unit);
@@ -952,7 +976,7 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     /* Sparse dynamic albedo volume: one unit past the static irradiance volume. */
     {
         int on = (g->dyn_on && g->dyn_tex != 0) ? 1 : 0;
-        int unit = GI_SDF_UNIT_BASE + GI_SDF_MAX_RESIDENT + 1;
+        int unit = GI_SDF_UNIT_BASE + 2 * GI_SDF_MAX_RESIDENT + 1;
         float dimf[3] = { (float)g->dyn_dim[0], (float)g->dyn_dim[1], (float)g->dyn_dim[2] };
         glUniform1i(g->loc.dyn_on, on);
         {
@@ -969,13 +993,26 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
         glBindTexture(GL_TEXTURE_3D, on ? g->dyn_tex : 0);
     }
 
-    /* Bind the resident SDF chunks (one per used slot) + metadata. */
+    /* Bind the resident SDF chunks (one per used slot) + metadata. The RGBA field
+     * is at unit BASE+i; the parallel R16F TRANSMISSION field at BASE+16+i. All
+     * slot textures are allocated at sdf->slot_dims, so the shader normalizes uvw
+     * by u_sdf_alloc (shared) while bounds-testing each chunk's own dims. */
+    if (sdf != NULL && g->loc.sdf_alloc >= 0) {
+        float a3[3] = { (float)sdf->slot_dims[0], (float)sdf->slot_dims[1],
+                        (float)sdf->slot_dims[2] };
+        glUniform3fv(g->loc.sdf_alloc, 1, a3);
+    }
     for (int i = 0; i < GI_SDF_MAX_RESIDENT; ++i) {
         int active = (sdf != NULL && sdf->slot_chunk[i] >= 0) ? 1 : 0;
         glUniform1i(g->loc.sdf_active[i], active);
         glUniform1i(g->loc.sdf[i], GI_SDF_UNIT_BASE + i);
         glActiveTexture(GL_TEXTURE0 + (GLenum)(GI_SDF_UNIT_BASE + i));
         glBindTexture(GL_TEXTURE_3D, active ? sdf->tex[i] : 0);
+        /* Transmission companion texture. */
+        int tunit = GI_SDF_UNIT_BASE + GI_SDF_MAX_RESIDENT + i;
+        glUniform1i(g->loc.strans[i], tunit);
+        glActiveTexture(GL_TEXTURE0 + (GLenum)tunit);
+        glBindTexture(GL_TEXTURE_3D, active ? sdf->tex_trans[i] : 0);
         if (active) {
             const gi_sdf_chunk_ram_t *r = &sdf->ram[sdf->slot_chunk[i]];
             float o3[3] = { r->origin[0], r->origin[1], r->origin[2] };
@@ -990,7 +1027,7 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
      * one, two units past the dynamic albedo volume. */
     {
         int zon = (sdf != NULL && sdf->has_zone && sdf->zone_tex != 0) ? 1 : 0;
-        int zunit = GI_SDF_UNIT_BASE + GI_SDF_MAX_RESIDENT + 2;
+        int zunit = GI_SDF_UNIT_BASE + 2 * GI_SDF_MAX_RESIDENT + 2;
         glUniform1i(g->loc.zone_on, zon);
         glUniform1i(g->loc.zone_sdf, zunit);
         if (zon) {
@@ -1008,7 +1045,7 @@ void gi_probe_gpu_dispatch(gi_probe_gpu_t *g, const gi_sdf_stream_t *sdf,
     /* Brick field lookup (units 3..6 past the zone SDF). */
     {
         int on = g->cbrick.on ? 1 : 0;
-        int u0 = GI_SDF_UNIT_BASE + GI_SDF_MAX_RESIDENT + 3;
+        int u0 = GI_SDF_UNIT_BASE + 2 * GI_SDF_MAX_RESIDENT + 3;
         glUniform1i(g->loc.cbrick_on, on);
         glUniform1i(g->loc.cbrick_index, u0);
         glUniform1i(g->loc.cbrick_meta, u0 + 1);

@@ -430,7 +430,7 @@ static bool tri_box_overlap(const float bc[3], const float bh[3],
 static bool build_sdf(const lm_mesh_scene_t *scene, const npc_svo_grid_t *svo,
                       float fine_voxel, const float mn[3], const float mx[3],
                       int max_dim, GLuint *out_sdf, int out_dims[3],
-                      float *out_voxel, float **out_albedo) {
+                      float *out_voxel, float **out_albedo, float **out_trans) {
     float ext[3] = { mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2] };
     float longest = fmaxf(ext[0], fmaxf(ext[1], ext[2]));
     float svoxel = longest / (float)max_dim; if (svoxel < fine_voxel) svoxel = fine_voxel;
@@ -445,6 +445,17 @@ static bool build_sdf(const lm_mesh_scene_t *scene, const npc_svo_grid_t *svo,
     if (out_albedo != NULL) {
         alb = calloc(cells * 3, sizeof(float));
         if (alb == NULL) { free(occ); return false; }
+    }
+    /* Per-voxel TRANSMISSION (0 = opaque .. 1 = clear glass): the MIN over every
+     * triangle stamping a voxel, so a window voxel shared with its opaque frame
+     * stays opaque (needs FINE voxels to separate the two -- see per-chunk res).
+     * Init 1.0: unstamped (empty) voxels are transparent, which is moot since the
+     * trace only tests transmission where it hits a surface. */
+    float *trans = NULL;
+    if (out_trans != NULL) {
+        trans = malloc(cells * sizeof(float));
+        if (trans == NULL) { free(occ); free(alb); return false; }
+        for (size_t i = 0; i < cells; ++i) trans[i] = 1.0f;
     }
     /* Conservative triangle rasterisation: stamp every scene triangle into every
      * coarse cell it intersects -> watertight walls (the SDF then truly encloses). */
@@ -471,11 +482,18 @@ static bool build_sdf(const lm_mesh_scene_t *scene, const npc_svo_grid_t *svo,
             for (int y = lo[1]; y <= hi[1]; ++y)
             for (int x = lo[0]; x <= hi[0]; ++x) {
                 size_t idx = (size_t)(z*dims[1]+y)*dims[0]+x;
-                if (occ[idx]) continue;
                 float bc[3] = { mn[0]+((float)x+0.5f)*svoxel,
                                 mn[1]+((float)y+0.5f)*svoxel,
                                 mn[2]+((float)z+0.5f)*svoxel };
-                if (tri_box_overlap(bc, bh, a, b, c)) {
+                if (!tri_box_overlap(bc, bh, a, b, c)) continue;
+                /* Transmission: MIN over EVERY stamping triangle (opaque wins),
+                 * so it must run even for already-occupied voxels. */
+                if (trans != NULL) {
+                    float mt = 1.0f - me->opacity;   /* opacity 1 -> trans 0 (opaque). */
+                    if (mt < trans[idx]) trans[idx] = mt;
+                }
+                if (occ[idx]) continue;   /* occupancy + albedo: first triangle only. */
+                {
                     occ[idx] = 1u;
                     /* Stamp this surface voxel's albedo from the SVO material at the
                      * voxel centre (the real, texture-averaged diffuse the gather
@@ -531,6 +549,7 @@ static bool build_sdf(const lm_mesh_scene_t *scene, const npc_svo_grid_t *svo,
     GLuint discard[3] = { bo[0], bo[1], bo[2] }; gl.DeleteBuffers(3, discard);
     *out_sdf = bo[3]; out_dims[0]=dims[0]; out_dims[1]=dims[1]; out_dims[2]=dims[2]; *out_voxel = svoxel;
     if (out_albedo != NULL) *out_albedo = alb;
+    if (out_trans != NULL) *out_trans = trans;
     return true;
 }
 
@@ -540,7 +559,7 @@ bool lm_gpu_field_build(const lm_mesh_scene_t *scene, float fine_voxel,
     float mn[3] = { box->min.x, box->min.y, box->min.z };
     float mx[3] = { box->max.x, box->max.y, box->max.z };
     GLuint buf; int dims[3]; float voxel;
-    if (!build_sdf(scene, NULL, fine_voxel, mn, mx, max_dim, &buf, dims, &voxel, NULL)) return false;
+    if (!build_sdf(scene, NULL, fine_voxel, mn, mx, max_dim, &buf, dims, &voxel, NULL, NULL)) return false;
     out->buf = (uint32_t)buf;
     out->dims[0]=dims[0]; out->dims[1]=dims[1]; out->dims[2]=dims[2];
     out->origin[0]=mn[0]; out->origin[1]=mn[1]; out->origin[2]=mn[2];
@@ -560,7 +579,7 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                        const lm_light_t *lights, uint32_t n_lights,
                        const lm_sky_t *sky, float transition, float maxdist,
                        uint32_t samples, uint32_t bounces, uint32_t seed,
-                       const char *sdf_out) {
+                       const char *sdf_out, int near_dim) {
     (void)maxdist;
     if (!g_ready || lm == NULL || accum == NULL || svo == NULL) return false;
     uint32_t nlux = lm->res_u * lm->res_v;
@@ -588,16 +607,22 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
      * GI cone-trace can tint its bounce by the static surface colour. LM_NEAR_DIM
      * raises the near grid (e.g. 256) so a SINGLE room-sized chunk keeps a fine
      * voxel edge -- the runtime auto-sizes its resident SDF textures to match. */
-    int near_dim = getenv("LM_NEAR_DIM") ? atoi(getenv("LM_NEAR_DIM")) : 128;
+    /* Per-chunk resolution (rpg per-chunk-res): the caller passes a chunk-specific
+     * grid dim; 0 falls back to the env/global default. Higher dim -> finer voxel
+     * over the same chunk extent, so detail-rich chunks (e.g. glass) resolve. */
+    if (near_dim <= 0)
+        near_dim = getenv("LM_NEAR_DIM") ? atoi(getenv("LM_NEAR_DIM")) : 128;
     if (near_dim < 16) near_dim = 16;
     GLuint b_sdf = 0; int dims[3]; float svoxel = 0.0f; float *near_alb = NULL;
+    float *near_trans = NULL;
     if (!build_sdf(scene, svo, svo->voxel_size, mn, mx, near_dim, &b_sdf, dims, &svoxel,
-                   sdf_out != NULL ? &near_alb : NULL))
+                   sdf_out != NULL ? &near_alb : NULL, sdf_out != NULL ? &near_trans : NULL))
         return false;
 
-    /* Persist this chunk's near SDF + albedo (rpg-iudw/rpg-fo9r): reuse the field
-     * we just built -- read the SSBO back and write the v2 .sdf sidecar (RGBA =
-     * albedo + distance). Non-fatal on failure. */
+    /* Persist this chunk's near SDF + albedo + transmission (rpg-iudw/rpg-fo9r):
+     * read the distance SSBO back and write the .sdf sidecar. v3 adds the per-voxel
+     * transmission plane (glass) so the runtime probe trace can pass rays through
+     * windows. Non-fatal on failure. */
     if (sdf_out != NULL) {
         size_t nf = (size_t)dims[0] * (size_t)dims[1] * (size_t)dims[2];
         float *sd = malloc(nf * sizeof(float));
@@ -607,13 +632,14 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                                 (GLsizeiptr)(nf * sizeof(float)), sd);
             int32_t d32[3] = { dims[0], dims[1], dims[2] };
             if (near_alb != NULL)
-                lm_sdf_save_rgba(sdf_out, d32, svoxel, mn, sd, near_alb);
+                lm_sdf_save_rgbat(sdf_out, d32, svoxel, mn, sd, near_alb, near_trans);
             else
                 lm_sdf_save(sdf_out, d32, svoxel, mn, sd);
             free(sd);
         }
     }
     free(near_alb);
+    free(near_trans);
 
     /* MEDIUM field: a ~MED_MULT x region box (chunked bakes only), clamped to the
      * scene, 128^3 -> coarser than near since it spans a bigger box. */

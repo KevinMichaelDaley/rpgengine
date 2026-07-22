@@ -92,7 +92,7 @@ bool lm_gpu_gather_run(const lm_lightmap_t *lm, lm_sh9_t *accum,
                        const lm_light_t *lights, uint32_t n_lights,
                        const lm_sky_t *sky, float transition, float maxdist,
                        uint32_t samples, uint32_t bounces, uint32_t seed,
-                       const char *sdf_out);
+                       const char *sdf_out, int near_dim);
 
 /**
  * @brief Chunked gather (rpg-fzht): partition @p scene_bounds into @p chunk_size
