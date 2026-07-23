@@ -603,7 +603,7 @@ def _glass_material(name, rgb, opacity=0.35):
 
 
 def build_stained_glass(name, opening_width=1.15, sill=2.0, jamb_h=2.5,
-                        wall_t=0.5, cols=3, rows=4, arcs=5, thickness=0.03,
+                        wall_t=0.5, cols=3, rows=4, arcs=5, thickness=0.10,
                         collection=None):
     """Segmented stained glazing for one arched light: a cols x rows grid of
     tinted panes over the rectangular aperture plus an arcs-wedge ring in the
@@ -1590,6 +1590,12 @@ def build_hall_scene(bake_root, collection=None, name="great_hall"):
     it can be passed as the regeneration callback to the exporter/baker. Returns
     the collection."""
     col = build_great_hall(name=name, collection=collection)
+    # Probe-shell refinement (see the exporter's ferrum_building handling):
+    # tag every hall mesh so the offline placer densifies bricks around ALL
+    # the interior geometry, not just the coarse air lattice.
+    for o in col.objects:
+        if o.type == "MESH":
+            o["ferrum_building"] = 1
     prepare_uvs(col)
     assign_wall_material(col, os.path.join(bake_root, "bake"))
     assign_floor_material(col, os.path.join(bake_root, "bake_floor"))
