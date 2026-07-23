@@ -2465,7 +2465,10 @@ def build_minimall(p, rng):
              3.0), M_METAL)            # scan gantry beam
         _box(story, (cx - 0.06, -cd + 0.56, 0.95),
              (cx + 1.6, -cd + 0.62, 1.05), M_TRIM)   # barrier arm
-    story_ob = story.to_object("LA_MiniMall_Story", mats)
+    # no two-story shops / story options selected -> the shell is empty;
+    # an empty mesh object breaks the scene exporter ("No mesh object").
+    story_ob = story.to_object("LA_MiniMall_Story", mats) \
+        if len(story.bm.faces) else None
 
     # ---- interior mode: slabs, demising walls, back corridor, hatch --------
     interior_obs = []
