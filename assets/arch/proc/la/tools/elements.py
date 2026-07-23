@@ -678,6 +678,8 @@ SWITCHBACK_SPEC = [
          unit='LENGTH', desc="Total rise"),
     dict(name="rail_height", type='FLOAT', default=0.95, min=0.8, max=1.1,
          unit='LENGTH'),
+    dict(name="double_rail", type='BOOL', default=True,
+         desc="Rail BOTH sides of the return (top) flight"),
 ]
 
 
@@ -704,23 +706,26 @@ def _steel_flight(sh, x0, x1, y0, y1, z0, z1, rail_h, rail_side,
              (x1 - st + 0.010, hi, zk), M_METAL)
     if rail_side is None:
         return
-    cx = (x0 + st * 0.5) if rail_side == 'lo' else (x1 - st * 0.5)
     slope = (z1 - z0) / (y1 - y0)
     zline = lambda y: z0 + (y - y0) * slope        # noqa: E731
     ym = 0.5 * (y0 + y1)
-    stations = [(y1, zline(y1) + rail_h), (ym, zline(ym) + rail_h),
-                (y0, zline(y0) + rail_h)]
-    if ext_y is not None:                          # level stub at the
-        if ext_end == 'top':                       # landing-adjacent end
-            stations.insert(0, (ext_y, z1 + rail_h))
-        else:
-            stations.append((ext_y, z0 + rail_h))
-    _bar(sh, stations, 0.045, 0.045, M_METAL, axis='y', center=cx)
-    n_po = max(2, int(round(abs(y1 - y0) / 1.1)))
-    for k in range(n_po + 1):                      # raked-run posts
-        y = y0 + (y1 - y0) * (0.06 + 0.88 * k / n_po)
-        _box(sh, (cx - 0.02, y - 0.02, zline(y) + 0.01),
-             (cx + 0.02, y + 0.02, zline(y) + rail_h - 0.0025), M_METAL)
+    sides = ('lo', 'hi') if rail_side == 'both' else (rail_side,)
+    ext_side = sides[-1]                           # outer side gets the stub
+    for side in sides:
+        cx = (x0 + st * 0.5) if side == 'lo' else (x1 - st * 0.5)
+        stations = [(y1, zline(y1) + rail_h), (ym, zline(ym) + rail_h),
+                    (y0, zline(y0) + rail_h)]
+        if ext_y is not None and side == ext_side:  # level stub at the
+            if ext_end == 'top':                    # landing-adjacent end
+                stations.insert(0, (ext_y, z1 + rail_h))
+            else:
+                stations.append((ext_y, z0 + rail_h))
+        _bar(sh, stations, 0.045, 0.045, M_METAL, axis='y', center=cx)
+        n_po = max(2, int(round(abs(y1 - y0) / 1.1)))
+        for k in range(n_po + 1):                   # raked-run posts
+            y = y0 + (y1 - y0) * (0.06 + 0.88 * k / n_po)
+            _box(sh, (cx - 0.02, y - 0.02, zline(y) + 0.01),
+                 (cx + 0.02, y + 0.02, zline(y) + rail_h - 0.0025), M_METAL)
     return
 
 
@@ -754,7 +759,9 @@ def build_switchback_stair(p, rng):
     _steel_flight(sh, 0.0, w, 0.0, run1, 0.0, h1, rail_h, 'lo',
                   ext_y=run1 + 0.10, ext_end='top')
     _steel_flight(sh, xB0, xB0 + w, run1 + 0.02, run1 + 0.02 - run_t * n2,
-                  h1, H, rail_h, 'hi', ext_y=run1 + 0.10, ext_end='base')
+                  h1, H, rail_h,
+                  'both' if p.get("double_rail", True) else 'hi',
+                  ext_y=run1 + 0.10, ext_end='base')
 
     # half-landing: plate + edge channels + 4 posts to ground.
     _box(sh, (lx0 + 0.01, ly0, h1 - 0.02), (lx1 - 0.01, ly1, h1 + 0.03),
