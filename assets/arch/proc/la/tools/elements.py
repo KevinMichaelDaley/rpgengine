@@ -37,8 +37,9 @@ import math
 
 from .. import params
 from ..geom import (
-    _MATS, _Shell, _box, _material,
-    M_CONCRETE, M_GLASS, M_METAL, M_STUCCO, M_TRIM,
+    _MATS, _Shell, _box, _material, _sheared_box,
+    M_CONCRETE, M_GLASS, M_METAL, M_SHUTTER, M_SIGN_A, M_SIGN_B, M_STUCCO,
+    M_TRIM,
 )
 
 
@@ -408,17 +409,12 @@ def build_factory_window(p, rng):
     def shards(xa, xb, za, zb):
         """Shattered pane: inset 4 mm (ring verts stay off the shared glass-
         sheet edge lines, hidden inside the mullion/frame bars), then knife
-        one jagged hole -- or two, splitting the pane at a random vertical
-        line whose shared edge carries no extra samples."""
+        ONE jagged hole -- a pane this small breaks as a single hole, never
+        two."""
         xa, xb, za, zb = xa + 0.004, xb - 0.004, za + 0.004, zb - 0.004
         if (xb - xa) < 0.12 or (zb - za) < 0.12:
             return                                     # sliver: swept clean
-        if (xb - xa) > 0.30 and rng.random() < 0.4:
-            xm = xa + (xb - xa) * rng.uniform(0.40, 0.60)
-            _shatter_rect(xa, xm, za, zb, 'right')
-            _shatter_rect(xm, xb, za, zb, 'left')
-        else:
-            _shatter_rect(xa, xb, za, zb, None)
+        _shatter_rect(xa, xb, za, zb, None)
 
     cells = [(i, j) for i in range(cols) for j in range(rows)]
     rng.shuffle(cells)
@@ -546,6 +542,272 @@ def build_cornice(p, rng):
 
 
 # ---------------------------------------------------------------------------
+# rpg-mv16 -- exterior steel switchback stair (0b)
+# ---------------------------------------------------------------------------
+SWITCHBACK_SPEC = [
+    dict(name="width", type='FLOAT', default=1.1, min=0.9, max=1.6,
+         unit='LENGTH', desc="Flight width"),
+    dict(name="height", type='FLOAT', default=3.0, min=2.0, max=6.0,
+         unit='LENGTH', desc="Total rise"),
+    dict(name="rail_height", type='FLOAT', default=0.95, min=0.8, max=1.1,
+         unit='LENGTH'),
+]
+
+
+def _steel_flight(sh, x0, x1, y0, y1, z0, z1, rail_h, rail_side,
+                  ext_y=None):
+    """One steel flight from base (y0,z0) to top (y1,z1): channel stringers
+    (sheared boxes on the nose pitch line), open-riser tread plates embedded
+    10 mm into the stringers, and a post-and-bar rail on @p rail_side ('lo'
+    = the x0 stringer, 'hi' = x1). When @p ext_y is given the rail bar
+    CONTINUES horizontally to that y at BASE level +rail_h -- one welded
+    polyline with a mitred pitch break, so there is no butt joint (butted
+    bar caps were coplanar -> T-junctions)."""
+    st, td = 0.06, 0.28                            # stringer web / depth
+    n = max(2, int(round(abs(z1 - z0) / 0.185)))
+    rise, run = (z1 - z0) / n, (y1 - y0) / n
+    for (sx0, sx1) in ((x0, x0 + st), (x1 - st, x1)):
+        _sheared_box(sh, sx0, sx1, y0, y1, z0 + 0.03, z1 + 0.03, td, M_METAL)
+    for k in range(n):                             # open-riser tread plates
+        ya = y0 + run * k
+        zk = z0 + rise * (k + 1)
+        lo, hi = (ya, ya + abs(run) * 0.92) if run > 0 else \
+                 (ya - abs(run) * 0.92, ya)
+        _box(sh, (x0 + st - 0.010, lo, zk - 0.045),
+             (x1 - st + 0.010, hi, zk), M_METAL)
+    if rail_side is None:
+        return
+    cx = (x0 + st * 0.5) if rail_side == 'lo' else (x1 - st * 0.5)
+    slope = (z1 - z0) / (y1 - y0)
+    zline = lambda y: z0 + (y - y0) * slope        # noqa: E731
+    ym = 0.5 * (y0 + y1)
+    stations = [(y1, zline(y1) + rail_h), (ym, zline(ym) + rail_h),
+                (y0, zline(y0) + rail_h)]
+    if ext_y is not None:                          # landing continuation
+        stations.append((ext_y, z0 + rail_h))
+    _bar(sh, stations, 0.045, 0.045, M_METAL, axis='y', center=cx)
+    n_po = max(2, int(round(abs(y1 - y0) / 1.1)))
+    for k in range(n_po + 1):                      # raked-run posts
+        y = y0 + (y1 - y0) * (0.06 + 0.88 * k / n_po)
+        _box(sh, (cx - 0.02, y - 0.02, zline(y) + 0.01),
+             (cx + 0.02, y + 0.02, zline(y) + rail_h - 0.0025), M_METAL)
+    return
+
+
+def build_switchback_stair(p, rng):
+    """Exterior steel switchback: flight A ascends +y onto the half-landing;
+    flight B departs from the SAME landing edge beside it and returns -y --
+    so the turn actually works (up A, 180 on the landing, up B). Channel
+    stringers, open risers, continuous mitred outer rails that run onto the
+    landing, far-edge landing rail. All members interpenetrate >= 10 mm,
+    never sharing a plane."""
+    w, H = p["width"], p["height"]
+    rail_h = p["rail_height"]
+    gap = 0.06
+    n = max(6, int(round(H / 0.185)))
+    n1 = (n + 1) // 2
+    n2 = n - n1
+    run_t = 0.27
+    h1 = H * n1 / n
+    run1 = run_t * n1
+    land_d = 1.05
+    xB0 = w + gap                                  # flight B x range
+    lx0, lx1 = 0.0, xB0 + w
+    ly0, ly1 = run1 - 0.02, run1 + land_d
+    sh = _Shell()
+    sh.tag = 'steps'
+
+    # both flights join the landing at its NEAR edge (y ~ run1): A tops out
+    # there ascending +y; B's base tucks 20 mm into the edge channel and
+    # ascends back -y beside A. Their rails continue onto the landing sides.
+    _steel_flight(sh, 0.0, w, 0.0, run1, 0.0, h1, rail_h, 'lo',
+                  ext_y=ly1 - 0.02)
+    _steel_flight(sh, xB0, xB0 + w, run1 + 0.02, run1 + 0.02 - run_t * n2,
+                  h1, H, rail_h, 'hi', ext_y=ly1 - 0.02)
+
+    # half-landing: plate + edge channels + 4 posts to ground.
+    _box(sh, (lx0 + 0.01, ly0, h1 - 0.02), (lx1 - 0.01, ly1, h1 + 0.03),
+         M_METAL)
+    _box(sh, (lx0, ly0 - 0.008, h1 - 0.16), (lx1, ly0 + 0.05, h1 + 0.035),
+         M_METAL)
+    _box(sh, (lx0, ly1 - 0.05, h1 - 0.16), (lx1, ly1 + 0.008, h1 + 0.035),
+         M_METAL)
+    for (px, py) in ((lx0 + 0.06, ly1 - 0.08), (lx1 - 0.06, ly1 - 0.08),
+                     (lx0 + 0.06, ly0 + 0.10), (lx1 - 0.06, ly0 + 0.10)):
+        _box(sh, (px - 0.035, py - 0.035, 0.0), (px + 0.035, py + 0.035,
+             h1 - 0.015), M_METAL)
+
+    # far-edge landing rail: dropped 6 mm so the through-running side bars
+    # cross it without any shared plane; posts stop inside the bars.
+    ztop = h1 + rail_h
+    _bar(sh, [(lx0 + 0.02, ztop - 0.006), (0.5 * (lx0 + lx1), ztop - 0.006),
+              (lx1 - 0.02, ztop - 0.006)], 0.045, 0.045, M_METAL, axis='x',
+         center=ly1 - 0.035)
+    for (px, py) in ((lx0 + 0.03, ly1 - 0.10), (lx1 - 0.03, ly1 - 0.10),
+                     (0.5 * (lx0 + lx1), ly1 - 0.035)):
+        _box(sh, (px - 0.02, py - 0.02, h1 + 0.02),
+             (px + 0.02, py + 0.02, ztop - 0.012), M_METAL)
+    return [sh.to_object("LA_Elem_Switchback", [_material(n) for n in _MATS])]
+
+
+# ---------------------------------------------------------------------------
+# rpg-0ag1 -- rolling metal shutter shopfront (0e)
+# ---------------------------------------------------------------------------
+SHUTTER_SPEC = [
+    dict(name="width", type='FLOAT', default=3.0, min=1.2, max=6.0,
+         unit='LENGTH'),
+    dict(name="height", type='FLOAT', default=2.8, min=2.0, max=4.5,
+         unit='LENGTH'),
+    dict(name="open", type='FLOAT', default=0.0, min=0.0, max=0.8,
+         desc="0 = rolled fully down; 0.8 = mostly open"),
+    dict(name="housing", type='BOOL', default=True,
+         desc="Exposed roll housing box at the head"),
+]
+
+
+def build_shutter(p, rng):
+    """Roll-down shutter in the xz plane (curtain near y=0, faces -y).
+
+    Side guide channels, optional roll-housing box, and the CURTAIN: a single
+    welded accordion ribbon -- per slat an angled face quad + an interlock
+    step quad (planar: every quad spans two parallel horizontal lines), ends
+    embedded 15 mm into the guides. Bottom bar closes the curtain edge."""
+    W, H = p["width"], p["height"]
+    sh = _Shell()
+    sh.tag = 'shutters'
+    gw, gd = 0.09, 0.10                            # guide channel w/d
+    _box(sh, (0.0, -gd * 0.5, 0.0), (gw, gd * 0.5, H), M_METAL)
+    _box(sh, (W - gw, -gd * 0.5, 0.0), (W, gd * 0.5, H), M_METAL)
+    z_head = H
+    if p["housing"]:
+        _box(sh, (-0.03, -0.17, H - 0.02), (W + 0.03, 0.17, H + 0.32),
+             M_METAL)
+        z_head = H - 0.02
+    # curtain: accordion ribbon from the head down to the opening line.
+    z_bot = 0.02 + p["open"] * (H - 0.55)
+    xa, xb = gw - 0.015, W - gw + 0.015            # embedded into guides
+    pitch, face_dy, hook = 0.10, 0.014, 0.025
+    z = z_head
+    yF, yB = -0.02, -0.02 + face_dy                # slat face / hook planes
+    while z - pitch >= z_bot:
+        zf = z - (pitch - hook)
+        sh.quad((xa, yF, z), (xb, yF, z), (xb, yB, zf), (xa, yB, zf),
+                M_SHUTTER)                          # angled slat face
+        sh.quad((xa, yB, zf), (xb, yB, zf), (xb, yF, zf - hook),
+                (xa, yF, zf - hook), M_SHUTTER)     # interlock step
+        z = zf - hook
+    _box(sh, (xa - 0.005, yF - 0.035, z - 0.09),
+         (xb + 0.005, yF + 0.045, z + 0.005), M_METAL)   # bottom bar
+    return [sh.to_object("LA_Elem_Shutter", [_material(n) for n in _MATS])]
+
+
+# ---------------------------------------------------------------------------
+# rpg-v3y9 -- cantilevered corrugated shop awning (0g)
+# ---------------------------------------------------------------------------
+AWNING_SPEC = [
+    dict(name="width", type='FLOAT', default=2.6, min=1.0, max=6.0,
+         unit='LENGTH'),
+    dict(name="depth", type='FLOAT', default=1.1, min=0.5, max=2.0,
+         unit='LENGTH', desc="Projection from the wall"),
+    dict(name="drop", type='FLOAT', default=0.35, min=0.1, max=0.8,
+         unit='LENGTH', desc="Fall from wall to front edge"),
+    dict(name="struts", type='INT', default=2, min=0, max=5,
+         desc="Diagonal underside struts"),
+]
+
+
+def build_awning(p, rng):
+    """Corrugated cantilever awning: wall plane y=0, mount top at z=0,
+    sheet sloping down-out to (-depth, -drop). The sheet is a welded
+    accordion of planar quads (verts alternate between two parallel sloped
+    planes along x). Ledger at the wall, front lip channel, and sheared-box
+    diagonal struts underneath."""
+    W, D, drop = p["width"], p["depth"], p["drop"]
+    sh = _Shell()
+    sh.tag = 'awnings'
+    _box(sh, (0.0, -0.045, -0.14), (W, 0.005, 0.0), M_METAL)      # ledger
+    # sheet normal (in the yz plane, perpendicular to the slope).
+    import math as _m
+    sl = _m.sqrt(D * D + drop * drop)
+    nY, nZ = -drop / sl, D / sl                    # unit normal (points up-out)
+    amp, pitch = 0.022, 0.085
+    nseg = max(2, int(round(W / pitch)))
+    xs = [W * k / nseg for k in range(nseg + 1)]
+    y0, z0 = -0.02, -0.03                          # start just off the wall
+    y1, z1 = -D, -0.03 - drop
+    for k in range(nseg):
+        o0 = amp if (k % 2) else 0.0               # alternate planes
+        o1 = amp if ((k + 1) % 2) else 0.0
+        a = (xs[k], y0 + nY * o0, z0 + nZ * o0)
+        b = (xs[k + 1], y0 + nY * o1, z0 + nZ * o1)
+        c = (xs[k + 1], y1 + nY * o1, z1 + nZ * o1)
+        d = (xs[k], y1 + nY * o0, z1 + nZ * o0)
+        sh.quad(a, b, c, d, M_METAL)
+    _box(sh, (-0.005, -D - 0.05, -0.10 - drop),
+         (W + 0.005, -D + 0.06, -0.005 - drop), M_METAL)          # front lip
+    ns = p["struts"]
+    for k in range(ns):
+        x = W * (k + 1) / (ns + 1)
+        # diagonal strut: wall (lower) out to the front edge underside.
+        _sheared_box(sh, x - 0.025, x + 0.025, -0.03, -D + 0.10,
+                     -0.30 - drop * 0.4, -drop - 0.06, 0.05, M_METAL)
+    return [sh.to_object("LA_Elem_Awning", [_material(n) for n in _MATS])]
+
+
+# ---------------------------------------------------------------------------
+# rpg-8o58 -- vertical projecting blade sign (0h)
+# ---------------------------------------------------------------------------
+BLADE_SPEC = [
+    dict(name="height", type='FLOAT', default=2.6, min=1.0, max=6.0,
+         unit='LENGTH', desc="Blade height"),
+    dict(name="projection", type='FLOAT', default=0.9, min=0.4, max=1.6,
+         unit='LENGTH', desc="Stand-off from the wall"),
+    dict(name="panels", type='INT', default=4, min=1, max=8,
+         desc="Stacked letter panels on the blade"),
+    dict(name="top_z", type='FLOAT', default=4.5, min=2.0, max=12.0,
+         unit='LENGTH', desc="Mount height of the blade top"),
+]
+
+
+def build_blade_sign(p, rng):
+    """Projecting blade sign: wall plane x=0 (blade projects +x), sign faces
+    +/-y. Wall plate + two bracket arms, the blade box, proud border trim
+    strips on both faces, and stacked letter-panel strips (alternating sign
+    palette) -- every add-on a closed box embedded >= 8 mm, never coplanar."""
+    Hb, P = p["height"], p["projection"]
+    z1 = p["top_z"]
+    z0 = z1 - Hb
+    bt = 0.12                                      # blade thickness
+    sh = _Shell()
+    sh.tag = 'signage'
+    _box(sh, (0.0, -0.10, z0 + Hb * 0.15), (0.035, 0.10, z1 - Hb * 0.05),
+         M_METAL)                                  # wall plate
+    for zc in (z1 - Hb * 0.12, z0 + Hb * 0.22):    # bracket arms
+        _bar(sh, [(0.02, zc), (P * 0.55, zc)], 0.05, 0.05, M_METAL,
+             axis='x')
+    _box(sh, (P * 0.45, -bt * 0.5, z0), (P, bt * 0.5, z1), M_SIGN_A)
+    # border trim: proud strips around both faces (top/bottom/front/back).
+    for ys, ye in ((-bt * 0.5 - 0.015, -bt * 0.5 + 0.008),
+                   (bt * 0.5 - 0.008, bt * 0.5 + 0.015)):
+        _box(sh, (P * 0.45 + 0.02, ys, z1 - 0.06), (P - 0.02, ye, z1 + 0.012),
+             M_TRIM)
+        _box(sh, (P * 0.45 + 0.02, ys, z0 - 0.012), (P - 0.02, ye, z0 + 0.06),
+             M_TRIM)
+        _box(sh, (P * 0.45 - 0.012, ys, z0 + 0.02), (P * 0.45 + 0.05, ye,
+             z1 - 0.02), M_TRIM)
+        _box(sh, (P - 0.05, ys, z0 + 0.02), (P + 0.012, ye, z1 - 0.02),
+             M_TRIM)
+    np_ = p["panels"]
+    for k in range(np_):                           # stacked letter panels
+        za = z0 + Hb * (k + 0.18) / np_
+        zb = z0 + Hb * (k + 0.82) / np_
+        for ys, ye in ((-bt * 0.5 - 0.010, -bt * 0.5 + 0.010),
+                       (bt * 0.5 - 0.010, bt * 0.5 + 0.010)):
+            _box(sh, (P * 0.45 + 0.09, ys, za), (P - 0.09, ye, zb), M_SIGN_B)
+    return [sh.to_object("LA_Elem_BladeSign", [_material(n) for n in _MATS])]
+
+
+# ---------------------------------------------------------------------------
 # registration
 # ---------------------------------------------------------------------------
 params.register_tool(idname="la_railing", label="Railing Kit",
@@ -560,3 +822,15 @@ params.register_tool(idname="la_factory_window", label="Factory Window",
 params.register_tool(idname="la_cornice", label="Modillion Cornice",
                      family="Elements", build=build_cornice,
                      spec=CORNICE_SPEC)
+params.register_tool(idname="la_switchback_stair", label="Switchback Stair",
+                     family="Elements", build=build_switchback_stair,
+                     spec=SWITCHBACK_SPEC)
+params.register_tool(idname="la_shutter", label="Roll-Up Shutter",
+                     family="Elements", build=build_shutter,
+                     spec=SHUTTER_SPEC)
+params.register_tool(idname="la_awning", label="Corrugated Awning",
+                     family="Elements", build=build_awning,
+                     spec=AWNING_SPEC)
+params.register_tool(idname="la_blade_sign", label="Blade Sign",
+                     family="Elements", build=build_blade_sign,
+                     spec=BLADE_SPEC)
