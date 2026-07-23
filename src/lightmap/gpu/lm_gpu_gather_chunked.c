@@ -15,6 +15,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "ferrum/lightmap/gpu/lm_gpu_chunk_mat.h"
 #include "ferrum/lightmap/lm_chunk_svo.h"
 #include "ferrum/memory/arena.h"
 #include "ferrum/renderer/chunk/chunk_grid.h"
@@ -162,7 +163,16 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
             phys_aabb_t nouter;
             chunk_tree_bounds(&ntree, c, NULL, &nouter);
             npc_svo_grid_t csvo;
-            if (!lm_chunk_svo_build(scene, nouter, fine_voxel, &csvo)) { ok = false; break; }
+            /* Stamp occupancy on the CPU, fill materials on the GPU (rpg-bpiz:
+             * the CPU surface subsample was the bake's wall-clock hog). If the
+             * rasterizer is unavailable, rebuild WITH the CPU material pass. */
+            if (!lm_chunk_svo_build(scene, nouter, fine_voxel, false, &csvo)) { ok = false; break; }
+            if (!lm_gpu_chunk_svo_materials(&csvo, scene->meshes,
+                                            scene->n_meshes)) {
+                npc_svo_grid_destroy(&csvo);
+                if (!lm_chunk_svo_build(scene, nouter, fine_voxel, true,
+                                        &csvo)) { ok = false; break; }
+            }
 
             /* Per near-chunk SDF sidecar path (rpg-iudw): <prefix>_cNNN.sdf. */
             char sdf_path[512];

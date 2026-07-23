@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "ferrum/lightmap/gpu/lm_gpu_pack.h"
+#include "ferrum/lightmap/gpu/lm_gpu_voxelize.h"
 #include "ferrum/lightmap/lm_sdf_file.h"
 #include "ferrum/npc/npc_svo.h"
 
@@ -348,11 +349,17 @@ bool lm_gpu_gather_init(const gl_loader_t *loader) {
     g_fin = gg_compile(CS_JFA_FIN);  g_gather = gg_compile(CS_GATHER);
     g_lightvis = gg_compile(CS_LIGHTVIS);
     g_ready = g_init && g_step && g_fin && g_gather && g_lightvis;
+    /* GPU voxel rasterizer (rpg-bpiz): optional -- on failure every consumer
+     * falls back to its CPU stamping path, so a refusal is not fatal here. */
+    if (g_ready && !lm_gpu_voxelize_init(loader))
+        fprintf(stderr, "lm_gpu_gather: GPU voxelizer unavailable, "
+                        "CPU stamping fallback in use\n");
     return g_ready;
 }
 
 void lm_gpu_gather_shutdown(void) {
     if (!g_ready) return;
+    lm_gpu_voxelize_shutdown();
     gl.DeleteProgram(g_init); gl.DeleteProgram(g_step);
     gl.DeleteProgram(g_fin); gl.DeleteProgram(g_gather); gl.DeleteProgram(g_lightvis);
     g_init = g_step = g_fin = g_gather = g_lightvis = 0; g_ready = false;
@@ -457,10 +464,38 @@ static bool build_sdf(const lm_mesh_scene_t *scene, const npc_svo_grid_t *svo,
         if (trans == NULL) { free(occ); free(alb); return false; }
         for (size_t i = 0; i < cells; ++i) trans[i] = 1.0f;
     }
+    /* GPU voxel rasterizer (rpg-bpiz): occupancy + albedo + transmission in
+     * one sliced-render-target pass over the box; the CPU conservative stamp
+     * below stays as the fallback when the rasterizer is unavailable. */
+    bool gpu_stamped = false;
+    {
+        lm_gpu_vox_grid_t vg;
+        phys_aabb_t vbox = { { mn[0], mn[1], mn[2] }, { mx[0], mx[1], mx[2] } };
+        if (lm_gpu_voxelize_run(scene ? scene->meshes : NULL,
+                                scene ? scene->n_meshes : 0u,
+                                &vbox, dims, &vg)) {
+            for (size_t i = 0; i < cells; ++i) {
+                occ[i] = vg.occ[i];
+                if (trans != NULL) trans[i] = vg.trans[i];
+                if (alb != NULL && vg.occ[i]) {
+                    if (vg.area[i] > 0.0f) {
+                        alb[i*3+0] = vg.albedo[i*3+0];
+                        alb[i*3+1] = vg.albedo[i*3+1];
+                        alb[i*3+2] = vg.albedo[i*3+2];
+                    } else {
+                        /* solid but unsampled: the CPU pass's neutral bounce. */
+                        alb[i*3+0] = alb[i*3+1] = alb[i*3+2] = 0.5f;
+                    }
+                }
+            }
+            lm_gpu_vox_grid_free(&vg);
+            gpu_stamped = true;
+        }
+    }
     /* Conservative triangle rasterisation: stamp every scene triangle into every
      * coarse cell it intersects -> watertight walls (the SDF then truly encloses). */
     float bh[3] = { svoxel*0.5f + 1e-4f, svoxel*0.5f + 1e-4f, svoxel*0.5f + 1e-4f };
-    for (uint32_t mi = 0; mi < (scene ? scene->n_meshes : 0u); ++mi) {
+    for (uint32_t mi = 0; mi < (gpu_stamped || scene == NULL ? 0u : scene->n_meshes); ++mi) {
         const lm_mesh_t *me = &scene->meshes[mi];
         for (uint32_t t = 0; t + 2 < me->index_count; t += 3) {
             const float *a = &me->positions[me->indices[t]*3];

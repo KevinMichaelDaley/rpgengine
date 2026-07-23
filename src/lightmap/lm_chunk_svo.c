@@ -58,7 +58,8 @@ static uint32_t chunk_depth(phys_aabb_t box, float voxel) {
 }
 
 bool lm_chunk_svo_build(const lm_mesh_scene_t *scene, phys_aabb_t box,
-                        float voxel, npc_svo_grid_t *out_svo) {
+                        float voxel, bool fill_materials,
+                        npc_svo_grid_t *out_svo) {
     if (!scene || !out_svo) return false;
     memset(out_svo, 0, sizeof *out_svo);
     uint32_t depth = chunk_depth(box, voxel);
@@ -74,6 +75,11 @@ bool lm_chunk_svo_build(const lm_mesh_scene_t *scene, phys_aabb_t box,
 
     for (uint32_t i = 0; i < nlocal; ++i)
         chunk_stamp(out_svo, &local[i]);
+
+    if (!fill_materials) {          /* a GPU material fill follows (rpg-bpiz) */
+        free(local);
+        return true;
+    }
 
     /* Voxelize textured material + smooth normal into the leaves (node-count
      * sized scratch, small per chunk). */

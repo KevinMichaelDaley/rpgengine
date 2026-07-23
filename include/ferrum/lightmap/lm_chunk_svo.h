@@ -26,14 +26,19 @@ extern "C" {
 
 /**
  * @brief Build a fine SVO over @p box from every @p scene triangle overlapping
- *        it, stamping occupancy + material and voxelizing textured reflectance /
- *        emission / smooth normals into the leaves. The octree depth is derived
- *        from @p voxel over the box's longest extent (clamped to
- *        NPC_SVO_MAX_DEPTH). On success @p out_svo is a ready octree (destroy
- *        with @ref npc_svo_grid_destroy); returns false on init/alloc failure.
+ *        it, stamping occupancy + material. When @p fill_materials is true the
+ *        CPU surface subsample also voxelizes textured reflectance / emission /
+ *        smooth normals into the leaves; pass false when a GPU material fill
+ *        (@ref lm_gpu_chunk_svo_materials) follows, so the expensive CPU pass
+ *        is skipped (leaf materials are then zero until filled). The octree
+ *        depth is derived from @p voxel over the box's longest extent (clamped
+ *        to NPC_SVO_MAX_DEPTH). On success @p out_svo is a ready octree
+ *        (destroy with @ref npc_svo_grid_destroy); returns false on init/alloc
+ *        failure.
  */
 bool lm_chunk_svo_build(const lm_mesh_scene_t *scene, phys_aabb_t box,
-                        float voxel, npc_svo_grid_t *out_svo);
+                        float voxel, bool fill_materials,
+                        npc_svo_grid_t *out_svo);
 
 #ifdef __cplusplus
 }
