@@ -1524,8 +1524,10 @@ int main(int argc, char **argv) {
                      * visibility (rpg-sazm). LEGACY_GI=1 keeps gi_runtime's internal
                      * prepass + the static full probe set. */
                     if (getenv("LEGACY_GI") == NULL && lstream.has_sdf) {
-                        static float sbmin[64 * 3], sbmax[64 * 3];
-                        int nb = gi_sdf_stream_boxes(&lstream.sdf, sbmin, sbmax);
+                        static float sbmin[GI_SDF_STREAM_MAX_BOXES * 3],
+                                     sbmax[GI_SDF_STREAM_MAX_BOXES * 3];
+                        int nb = gi_sdf_stream_boxes(&lstream.sdf, sbmin, sbmax,
+                                                     GI_SDF_STREAM_MAX_BOXES);
                         /* Dual prepass: SDF chunk (box) + lightmap chunk (per-mesh
                          * mchunk) visibility in one pass. */
                         client_scene_gi_visibility(&cs, rc.view, rc.proj, sbmin, sbmax, nb,

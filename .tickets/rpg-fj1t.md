@@ -1,6 +1,6 @@
 ---
 id: rpg-fj1t
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-21T01:38:36Z

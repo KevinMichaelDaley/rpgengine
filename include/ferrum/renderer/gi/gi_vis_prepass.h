@@ -27,7 +27,10 @@ extern "C" {
 #endif
 
 /** Max SDF chunk boxes the world-mode fragment shader tests per fragment. */
-#define GI_VIS_MAX_BOXES 64
+/* Max SDF chunk boxes the visibility prepass classifies. Bounded by fragment
+ * uniform space: 128 vec3 pairs = 768 components, within the GL 3.3 minimum of
+ * 1024. Adaptive bakes produce ~100+ chunks, so 64 was too low. */
+#define GI_VIS_MAX_BOXES 128
 
 /** The chunk-id prepass + its visible-chunk result. */
 typedef struct gi_vis_prepass {

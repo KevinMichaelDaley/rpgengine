@@ -92,7 +92,8 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
         gi->sdf_ptr = &gi->sdf;
         gi->sdf_owned = 1;
     }
-    gi->n_sdf_boxes = gi_sdf_stream_boxes(gi->sdf_ptr, gi->box_min, gi->box_max);
+    gi->n_sdf_boxes = gi_sdf_stream_boxes(gi->sdf_ptr, gi->box_min, gi->box_max,
+                                          GI_VIS_MAX_BOXES);
 
     /* --- Adaptive probes seeded over the play volume + accel grid. --- */
     gi->probe_pos = malloc((size_t)GI_MAX_PROBES * 3 * sizeof(float));

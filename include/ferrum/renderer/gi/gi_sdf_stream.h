@@ -140,12 +140,17 @@ void gi_sdf_stream_mark_probes_uploaded(gi_sdf_stream_t *s, int c);
 int gi_sdf_stream_resident_boxes(const gi_sdf_stream_t *s, float *out_min,
                                  float *out_max, int cap);
 
+/** Suggested @c out_min / @c out_max capacity (3 floats per box) for the box
+ *  queries -- comfortably above the SDF chunk counts an adaptive bake produces. */
+#define GI_SDF_STREAM_MAX_BOXES 256
+
 /**
  * @brief Fill @p out_min / @p out_max (3 floats per chunk) with each SDF chunk's
  *        world box, for the WORLD-mode visibility prepass to classify fragments
- *        by world position. Returns the chunk count.
+ *        by world position. Writes at most @p cap boxes (never past the caller's
+ *        buffer) and returns how many were written (<= chunk count).
  */
-int gi_sdf_stream_boxes(const gi_sdf_stream_t *s, float *out_min, float *out_max);
+int gi_sdf_stream_boxes(const gi_sdf_stream_t *s, float *out_min, float *out_max, int cap);
 
 /**
  * @brief Page the visible chunks (@p visible[0..n_chunks), from the prepass) into

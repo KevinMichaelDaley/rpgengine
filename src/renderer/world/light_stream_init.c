@@ -235,7 +235,7 @@ bool client_light_stream_init(client_light_stream_t *ls,
         if (!ss || !ls->sdf_entries || !ls->sdf_visible || !sbmin || !sbmax) {
             free(sbmin); free(sbmax); client_light_stream_destroy(ls); return false;
         }
-        gi_sdf_stream_boxes(&ls->sdf, sbmin, sbmax);
+        gi_sdf_stream_boxes(&ls->sdf, sbmin, sbmax, (int)n_sdf);   /* buffer sized to n_sdf. */
         fr_chunk_table_init(&ls->sdf_table, &ls->stream, ls->sdf_entries, n_sdf);
         for (uint32_t c = 0; c < n_sdf; ++c) {
             ss[c].owner = ls; ss[c].chunk = (int)c;

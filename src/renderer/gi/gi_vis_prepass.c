@@ -82,7 +82,7 @@ int gi_vis_prepass_init(gi_vis_prepass_t *pp, int w, int h, int n_chunks)
         "void main(){ v_world = p; gl_Position = u_mvp * vec4(p,1.0); }\n",
         "#version 330 core\nin vec3 v_world;\nout uint o;\n"
         "uniform int u_nboxes;\n"
-        "uniform vec3 u_bmin[64];\nuniform vec3 u_bmax[64];\n"
+        "uniform vec3 u_bmin[128];\nuniform vec3 u_bmax[128];\n"
         "void main(){ uint id = 0u;\n"
         "  for(int i=0;i<u_nboxes;++i){\n"
         "    if(all(greaterThanEqual(v_world,u_bmin[i])) && all(lessThanEqual(v_world,u_bmax[i]))){ id = uint(i)+1u; break; }\n"
@@ -179,7 +179,7 @@ int gi_vis_prepass_enable_dual(gi_vis_prepass_t *pp, int n_lm_chunks)
         "void main(){ v_world = p; gl_Position = u_mvp * vec4(p,1.0); }\n",
         "#version 330 core\nin vec3 v_world;\nout uint o;\n"
         "uniform int u_nboxes;\nuniform int u_lm;\n"
-        "uniform vec3 u_bmin[64];\nuniform vec3 u_bmax[64];\n"
+        "uniform vec3 u_bmin[128];\nuniform vec3 u_bmax[128];\n"
         "void main(){ uint sdf = 0u;\n"
         "  for(int i=0;i<u_nboxes;++i){\n"
         "    if(all(greaterThanEqual(v_world,u_bmin[i])) && all(lessThanEqual(v_world,u_bmax[i]))){ sdf = uint(i)+1u; break; }\n"

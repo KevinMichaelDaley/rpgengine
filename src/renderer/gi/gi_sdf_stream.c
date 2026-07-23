@@ -285,18 +285,19 @@ int gi_sdf_stream_resident_boxes(const gi_sdf_stream_t *s, float *out_min,
     return n;
 }
 
-int gi_sdf_stream_boxes(const gi_sdf_stream_t *s, float *out_min, float *out_max)
+int gi_sdf_stream_boxes(const gi_sdf_stream_t *s, float *out_min, float *out_max, int cap)
 {
-    if (s == NULL || out_min == NULL || out_max == NULL)
+    if (s == NULL || out_min == NULL || out_max == NULL || cap <= 0)
         return 0;
-    for (int c = 0; c < s->n_chunks; ++c) {
+    int n = s->n_chunks < cap ? s->n_chunks : cap;   /* never write past the buffer. */
+    for (int c = 0; c < n; ++c) {
         const gi_sdf_chunk_ram_t *r = &s->ram[c];
         for (int a = 0; a < 3; ++a) {
             out_min[c*3+a] = r->origin[a];
             out_max[c*3+a] = r->origin[a] + (float)r->dims[a] * r->voxel;
         }
     }
-    return s->n_chunks;
+    return n;
 }
 
 /* Upload chunk c into resident slot. */
