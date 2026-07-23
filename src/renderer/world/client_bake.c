@@ -164,6 +164,7 @@ static uint32_t client_bake_meshes(client_bake_ctx_t *c, arena_t *arena,
             lm->opacity = d->materials[mi].opacity;   /* glass -> SDF transmission. */
         }
         lm->emissive = (vec3_t){ 0.0f, 0.0f, 0.0f };
+        lm->important = o->important;   /* ferrum_important -> force fine SDF chunks. */
         lm->material = 0;
         int lr = (o->lightmap_res > 0) ? o->lightmap_res : 64;
         lm->lightmap_resolution = (uint32_t)(lmscale * (float)lr + 0.5f);

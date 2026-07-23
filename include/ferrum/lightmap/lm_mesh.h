@@ -45,6 +45,9 @@ typedef struct lm_mesh {
     float           opacity;   /**< 1 = opaque (default); <1 = translucent (glass).
                                 *   Stamped into the SDF transmission channel so probe
                                 *   rays can pass through windows into interiors. */
+    int             important; /**< 1 = FORCE fine SDF chunks over this mesh's region
+                                *   (ferrum_important), overriding the triangle-density
+                                *   heuristic for low-poly buildings with interiors. */
     uint16_t        material;  /**< SVO material id (for far-field reflectors). */
     uint32_t        lightmap_resolution; /**< atlas rect size in texels. */
 } lm_mesh_t;

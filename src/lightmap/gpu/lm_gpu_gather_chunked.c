@@ -73,9 +73,14 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
                     if (p < lo[a]) lo[a] = p;
                     if (p > hi[a]) hi[a] = p;
                 }
-            float foot = (hi[0] - lo[0]) * (hi[2] - lo[2]);   /* XZ footprint (m^2). */
-            float dens = (float)(me->index_count / 3u) / (foot > 1.0f ? foot : 1.0f);
-            if (dens < det_dens) continue;                    /* flat/sparse -> coarse. */
+            /* ferrum_important FORCES detail regardless of density (low-poly
+             * buildings whose interiors still need fine chunks). Otherwise the
+             * triangle-density heuristic gates it (flat/sparse -> coarse). */
+            if (!me->important) {
+                float foot = (hi[0] - lo[0]) * (hi[2] - lo[2]);   /* XZ footprint (m^2). */
+                float dens = (float)(me->index_count / 3u) / (foot > 1.0f ? foot : 1.0f);
+                if (dens < det_dens) continue;
+            }
             for (int a = 0; a < 3; ++a) { det_min[n_det * 3 + a] = lo[a]; det_max[n_det * 3 + a] = hi[a]; }
             ++n_det;
         }

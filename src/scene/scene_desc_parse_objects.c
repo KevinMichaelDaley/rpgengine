@@ -116,6 +116,9 @@ bool scene_desc_parse_objects(const json_value_t *root, struct arena *arena,
         /* BUILDING objects get a densified probe shell around their surfaces in
          * the offline placer (ferrum_building on the Blender side). */
         d->building = sd_field_bool(o, "building", false) ? 1 : 0;
+        /* IMPORTANT objects FORCE fine SDF chunks over their region regardless of
+         * triangle density (ferrum_important on the Blender side). */
+        d->important = sd_field_bool(o, "important", false) ? 1 : 0;
         d->sh_layer = (int32_t)sd_field_num(o, "sh_layer", 0.0f);
 
         const json_value_t *mats = json_object_get(o, "materials");

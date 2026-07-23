@@ -58,6 +58,12 @@ typedef struct scene_desc_object {
                                              *   placer densifies a probe shell around
                                              *   this object's surfaces (interior rooms
                                              *   + exterior facades) for crisp GI. */
+    int32_t  important;                     /**< 1 = IMPORTANT (ferrum_important on the
+                                             *   Blender object): FORCE this object's
+                                             *   region to fine SDF chunks regardless of
+                                             *   triangle density -- for low-poly
+                                             *   buildings whose interiors still need
+                                             *   resolution the density heuristic misses. */
 } scene_desc_object_t;
 
 #ifdef __cplusplus

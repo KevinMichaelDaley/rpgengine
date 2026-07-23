@@ -707,6 +707,12 @@ def export_scene(collection_name, out_dir, tiles=None, bake_res=1024,
         # obj["ferrum_building"] = 1 in Blender.
         if bool(o.get("ferrum_building", 0)):
             rec["building"] = True
+        # IMPORTANT objects (ferrum_important): force fine SDF chunks over their
+        # region regardless of triangle density -- for low-poly buildings whose
+        # interiors the density heuristic would leave coarse. Tag the building's
+        # shell/interior meshes with obj["ferrum_important"] = 1 in Blender.
+        if bool(o.get("ferrum_important", 0)):
+            rec["important"] = True
         objs.append(rec)
 
     manifest = {"collection": collection_name,
