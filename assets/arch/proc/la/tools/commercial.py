@@ -46,6 +46,7 @@ import bpy
 
 from .. import params
 from .. import topology
+from .storefront import emit_storefront_bay
 from ..geom import (
     _MATS, _Shell, _Wall, _box, _material, _sheared_box, _wall_solid,
     M_CONCRETE, M_GLASS, M_METAL, M_SHUTTER, M_SIGN_A, M_SIGN_B, M_SIGN_C,
@@ -1037,6 +1038,18 @@ def build_minimall(p, rng):
                 (0, -1, 0), M_STUCCO, thickness=thick, inner_zmax=iz_max)
     _wf.inner_u0, _wf.inner_u1 = wx + wt, Wm - (0.0 if corner else wt)
     _wf.fill(cls_m, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS)
+    # storefront-bay dressing (rpg-a1ep): checkerboard tile piers + bulkhead,
+    # aluminium mullions/transom/head channel, entry door frame -- applied
+    # PROUD of the wall plane on every OPEN front bay. Left pier per bay
+    # (plus a right pier on the last) so adjacent dressings never overlap.
+    if p.get("storefront_detail", True):
+        open_idx = [i for i, f9 in enumerate(fates_m) if f9 == 'open']
+        for i in open_idx:
+            (_b0, _b1, o0, o1) = bays_m[i]
+            bh9 = 0.9 if high_bk_m[i] else 0.62
+            emit_storefront_bay(shell, o0, o1, 0.0, doors_m[i], Z_SF,
+                                bulkhead=bh9,
+                                piers=(True, i == open_idx[-1]))
     # court-arm storefronts + their outer/south walls.
     for xa in xarms:
         ab, ad, af, ah = xa['bays'], xa['doors'], xa['fates'], xa['high']
@@ -2356,6 +2369,8 @@ def build_minimall(p, rng):
 SPEC = [
     params.MODE_PARAM,
     dict(name="tenants", type='INT', default=5, min=2, max=20),
+    dict(name="storefront_detail", type='BOOL', default=True,
+         desc="Checkerboard-tile storefront dressing on open tenant bays"),
     dict(name="tenant_width", type='FLOAT', default=5.5, min=4.0, max=8.0,
          unit='LENGTH', desc="Bay width per tenant"),
     dict(name="depth", type='FLOAT', default=12.0, min=8.0, max=16.0,
