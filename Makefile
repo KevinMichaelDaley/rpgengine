@@ -400,6 +400,7 @@ BIN_HEADLESS += build/gi_probe_kernel_tests
 BIN_HEADLESS += build/gi_probe_sample_tests
 BIN_HEADLESS += build/gi_probe_place_tests
 BIN_HEADLESS += build/shadow_csm_grid_tests
+BIN_HEADLESS += build/chunk_tree_tests
 BIN_HEADLESS += build/probe_brick_tests
 BIN_HEADLESS += build/probe_fixup_tests
 BIN_HEADLESS += build/probe_brick_index_tests
@@ -1186,6 +1187,10 @@ build/frustum_cull_tests: tests/renderer/frustum_cull_tests.c src/renderer/cull/
 # compiled with the CSM cascade module + math (no GL).
 build/shadow_csm_grid_tests: tests/renderer/shadow_csm_grid_tests.c src/renderer/shadow_csm_cascade.c $(MATH_SRC) | build
 	$(CC) $(CFLAGS) tests/renderer/shadow_csm_grid_tests.c src/renderer/shadow_csm_cascade.c $(MATH_SRC) -o $@ -lm
+
+# Adaptive chunk-tree partition (rpg-zw99). Headless: pure geometry + arena.
+build/chunk_tree_tests: tests/renderer/chunk_tree_tests.c src/renderer/chunk/chunk_tree_build.c src/renderer/chunk/chunk_tree_query.c src/memory/arena_init.c src/memory/arena_alloc.c | build
+	$(CC) $(CFLAGS) tests/renderer/chunk_tree_tests.c src/renderer/chunk/chunk_tree_build.c src/renderer/chunk/chunk_tree_query.c src/memory/arena_init.c src/memory/arena_alloc.c -o $@ -lm
 
 # Probe placement + .probes file (rpg-ft0g). Headless: probe module + arena only.
 build/probe_tests: tests/probe/probe_tests.c $(PROBE_SRC) src/memory/arena_init.c src/memory/arena_alloc.c | build

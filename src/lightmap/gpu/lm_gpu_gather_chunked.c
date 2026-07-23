@@ -16,7 +16,9 @@
 #include <stdlib.h>
 
 #include "ferrum/lightmap/lm_chunk_svo.h"
+#include "ferrum/memory/arena.h"
 #include "ferrum/renderer/chunk/chunk_grid.h"
+#include "ferrum/renderer/chunk/chunk_tree.h"
 
 bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
                            phys_aabb_t scene_bounds, float fine_voxel,
@@ -40,13 +42,56 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
     if (far_mult < 1.0f) far_mult = 1.0f;
     if (far_dim  < 8)    far_dim  = 8;
 
-    chunk_grid_t ngrid, fgrid;
-    if (!chunk_grid_init(&ngrid, scene_bounds, chunk_size, margin))
-        return false;
+    chunk_grid_t fgrid;
     if (!chunk_grid_init(&fgrid, scene_bounds, chunk_size * far_mult, chunk_size * far_mult))
         return false;
-    uint32_t nchunks = chunk_grid_count(&ngrid);
-    uint32_t nfar    = chunk_grid_count(&fgrid);
+    uint32_t nfar = chunk_grid_count(&fgrid);
+
+    /* ADAPTIVE near partition (rpg-zw99): DETAIL-dense regions (buildings)
+     * subdivide to small leaves -> a fine voxel at the fixed near grid dim, while
+     * flat/sparse regions (terrain, road, distant hills) stay large -> a coarse
+     * voxel. Detail = meshes whose triangle density over their XZ footprint clears
+     * a threshold (LM_DETAIL_DENSITY tris/m^2); terrain/road are big + sparse and
+     * fall below it. chunk_size is the COARSE (max) leaf; LM_CHUNK_SPLIT sets how
+     * many halvings down to the finest building leaf. Replaces the old uniform
+     * grid + the glass-only fine heuristic. */
+    float det_dens = getenv("LM_DETAIL_DENSITY") ? (float)atof(getenv("LM_DETAIL_DENSITY")) : 1.0f;
+    int   split    = getenv("LM_CHUNK_SPLIT") ? atoi(getenv("LM_CHUNK_SPLIT")) : 4;
+    if (split < 1) split = 1;
+    float min_chunk = chunk_size / (float)split;
+    float *det_min = malloc((size_t)scene->n_meshes * 3u * sizeof(float));
+    float *det_max = malloc((size_t)scene->n_meshes * 3u * sizeof(float));
+    uint32_t n_det = 0;
+    if (det_min != NULL && det_max != NULL) {
+        for (uint32_t mi = 0; mi < scene->n_meshes; ++mi) {
+            const lm_mesh_t *me = &scene->meshes[mi];
+            if (me->positions == NULL || me->vert_count == 0 || me->index_count < 3) continue;
+            float lo[3] = { 1e30f, 1e30f, 1e30f }, hi[3] = { -1e30f, -1e30f, -1e30f };
+            for (uint32_t v = 0; v < me->vert_count; ++v)
+                for (int a = 0; a < 3; ++a) {
+                    float p = me->positions[v * 3u + (uint32_t)a];
+                    if (p < lo[a]) lo[a] = p;
+                    if (p > hi[a]) hi[a] = p;
+                }
+            float foot = (hi[0] - lo[0]) * (hi[2] - lo[2]);   /* XZ footprint (m^2). */
+            float dens = (float)(me->index_count / 3u) / (foot > 1.0f ? foot : 1.0f);
+            if (dens < det_dens) continue;                    /* flat/sparse -> coarse. */
+            for (int a = 0; a < 3; ++a) { det_min[n_det * 3 + a] = lo[a]; det_max[n_det * 3 + a] = hi[a]; }
+            ++n_det;
+        }
+    }
+    /* Tree node pool: bounded, offline -> a heap arena is fine. */
+    static uint8_t tree_buf[64u * 1024u * 1024u];
+    arena_t tree_arena; arena_init(&tree_arena, tree_buf, sizeof tree_buf);
+    chunk_tree_t ntree;
+    bool tree_ok = chunk_tree_build(&ntree, scene_bounds, min_chunk, chunk_size, margin,
+                                    det_min, det_max, n_det, margin, &tree_arena);
+    free(det_min); free(det_max);
+    if (!tree_ok) return false;
+    uint32_t nchunks = chunk_tree_count(&ntree);
+    fprintf(stderr, "lm_gpu_gather_chunked: adaptive partition -> %u chunks "
+            "(%u detail meshes, %.0f..%.0f m leaves)\n", nchunks, n_det, (double)min_chunk,
+            (double)chunk_size);
 
     /* Per-luxel near-chunk id, per-near-chunk far-cell id, and reusable scratch
      * sized for the worst-case single chunk. */
@@ -60,46 +105,22 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
         return false;
     }
 
-    /* Per-chunk SDF resolution: a chunk containing GLASS (a translucent mesh)
-     * bakes at a FINER grid so window openings resolve as distinct voxels --
-     * otherwise the v3 transmission channel can't separate the glass from its
-     * opaque frame (they share a coarse voxel -> reads opaque -> no light in).
-     * Precompute each translucent mesh's world AABB; a chunk overlapping any gets
-     * fine_dim. (Building-AABB-driven selection is the follow-up rpg-zw99.) */
-    int base_dim = getenv("LM_NEAR_DIM") ? atoi(getenv("LM_NEAR_DIM")) : 128;
-    int fine_dim = getenv("LM_NEAR_DIM_FINE") ? atoi(getenv("LM_NEAR_DIM_FINE"))
-                                              : base_dim * 2;
-    if (base_dim < 16) base_dim = 16;
-    if (fine_dim < base_dim) fine_dim = base_dim;
-    uint32_t n_glass = 0;
-    float *glass_aabb = malloc((size_t)scene->n_meshes * 6u * sizeof(float));
-    if (glass_aabb != NULL) {
-        for (uint32_t mi = 0; mi < scene->n_meshes; ++mi) {
-            const lm_mesh_t *me = &scene->meshes[mi];
-            if (me->opacity >= 0.999f || me->positions == NULL || me->vert_count == 0)
-                continue;
-            float *bx = &glass_aabb[n_glass * 6u];
-            bx[0] = bx[1] = bx[2] = 1e30f; bx[3] = bx[4] = bx[5] = -1e30f;
-            for (uint32_t v = 0; v < me->vert_count; ++v)
-                for (int a = 0; a < 3; ++a) {
-                    float p = me->positions[v * 3u + (uint32_t)a];
-                    if (p < bx[a]) bx[a] = p;
-                    if (p > bx[3 + a]) bx[3 + a] = p;
-                }
-            ++n_glass;
-        }
-    }
+    /* Fixed near grid resolution: the ADAPTIVE part is the leaf SIZE (above), so a
+     * building's small leaf yields a fine voxel and a flat leaf a coarse one at the
+     * SAME near_dim -> every chunk texture is near_dim^3 (uniform GPU slot). */
+    int near_dim = getenv("LM_NEAR_DIM") ? atoi(getenv("LM_NEAR_DIM")) : 128;
+    if (near_dim < 16) near_dim = 16;
 
-    /* Assign each luxel to the near chunk its position falls in. */
+    /* Assign each luxel to the near LEAF its position falls in. */
     for (uint32_t i = 0; i < nlux; ++i) {
         vec3_t p = lm->luxels[i].pos;
-        uint32_t c = chunk_grid_of_point(&ngrid, p.x, p.y, p.z);
+        uint32_t c = chunk_tree_of_point(&ntree, p.x, p.y, p.z);
         chunk_of[i] = (c == UINT32_MAX) ? 0u : c;   /* clamp strays to chunk 0 */
     }
-    /* Map each near chunk to the far cell containing its centre. */
+    /* Map each near leaf to the far cell containing its centre. */
     for (uint32_t c = 0; c < nchunks; ++c) {
         phys_aabb_t inner;
-        chunk_grid_bounds(&ngrid, c, &inner, NULL);
+        chunk_tree_bounds(&ntree, c, &inner, NULL);
         float cx = (inner.min.x + inner.max.x) * 0.5f;
         float cy = (inner.min.y + inner.max.y) * 0.5f;
         float cz = (inner.min.z + inner.max.z) * 0.5f;
@@ -132,9 +153,9 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
             if (m == 0)
                 continue;
 
-            /* Build this chunk's OWN fine SVO over its outer box, gather, free. */
+            /* Build this leaf's OWN fine SVO over its outer box, gather, free. */
             phys_aabb_t nouter;
-            chunk_grid_bounds(&ngrid, c, NULL, &nouter);
+            chunk_tree_bounds(&ntree, c, NULL, &nouter);
             npc_svo_grid_t csvo;
             if (!lm_chunk_svo_build(scene, nouter, fine_voxel, &csvo)) { ok = false; break; }
 
@@ -146,22 +167,11 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
                     (int)sizeof sdf_path)
                 chunk_sdf = sdf_path;
 
-            /* Fine res iff this chunk's outer box overlaps any glass mesh. */
-            int chunk_dim = base_dim;
-            for (uint32_t g = 0; g < n_glass; ++g) {
-                const float *bx = &glass_aabb[g * 6u];
-                if (bx[0] <= nouter.max.x && bx[3] >= nouter.min.x &&
-                    bx[1] <= nouter.max.y && bx[4] >= nouter.min.y &&
-                    bx[2] <= nouter.max.z && bx[5] >= nouter.min.z) {
-                    chunk_dim = fine_dim; break;
-                }
-            }
-
             lm_lightmap_t sub = { tlux, m, 1 };
             ok = lm_gpu_gather_run(&sub, sacc, &csvo, scene, &nouter,
                                    has_far ? &farfield : NULL, lights, n_lights, sky,
                                    transition, maxdist, samples, bounces, seed,
-                                   chunk_sdf, chunk_dim);
+                                   chunk_sdf, near_dim);
             npc_svo_grid_destroy(&csvo);
             if (!ok)
                 break;
@@ -176,6 +186,5 @@ bool lm_gpu_gather_chunked(const lm_lightmap_t *lm, lm_sh9_t *accum,
     }
 
     free(chunk_of); free(farcell); free(idx); free(tlux); free(sacc);
-    free(glass_aabb);
     return ok;
 }
