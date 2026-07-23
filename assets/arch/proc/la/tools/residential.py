@@ -778,6 +778,26 @@ def build_dingbat(p, rng):
                 qf((sx0f, ysf[k4], bsf[k4]), (sx0f, ysf[k4 + 1], bsf[k4 + 1]),
                    (sx1f, ysf[k4 + 1], bsf[k4 + 1]), (sx1f, ysf[k4], bsf[k4]))
 
+        # flight handrails (rpg-caur): pitched welded rails on BOTH
+        # stringers of every flight -- one mitred _bar per side plus square
+        # posts embedded into the stringer top and the rail underside. The
+        # plate-side ends extend ONTO the half landing so they weld into
+        # the landing guard legs (never floating butt joints).
+        def flight_rail(x0, y_from, y_to, z_from, z_to, ext_from, ext_to):
+            d8 = 1.0 if y_to > y_from else -1.0
+            stair.tag = 'rails'
+            for xs in (x0 + st * 0.5, x0 + s_w - st * 0.5):
+                el2._bar(stair, [(y_from - d8 * ext_from, z_from + 0.895),
+                                 (y_to + d8 * ext_to, z_to + 0.895)],
+                         0.045, 0.045, M_METAL, tag='rails', axis='y',
+                         center=xs)
+                for t7 in (0.06, 0.5, 0.94):
+                    yp = y_from + (y_to - y_from) * t7
+                    zp = z_from + (z_to - z_from) * t7
+                    _box(stair, (xs - 0.021, yp - 0.021, zp - 0.05),
+                         (xs + 0.021, yp + 0.021, zp + 0.88), M_METAL)
+            stair.tag = 'steps'
+
         land_y0 = None
         for i in range(len(levels) - 1):
             zb, zt = levels[i], levels[i + 1]
@@ -789,17 +809,30 @@ def build_dingbat(p, rng):
             # walkway edge (grade for the first), TOP at the plate's near edge.
             flight(laneA_x0, y_arr, land_y0 - 0.006, zb, zh,
                    0.0 if i == 0 else 0.12, 0.10)
+            flight_rail(laneA_x0, y_arr, land_y0 - 0.006, zb, zh, 0.02, 0.12)
             # half landing plate.
             lx0 = min(laneA_x0, laneB_x0)
             lx1 = max(laneA_x0, laneB_x0) + s_w
             _box(stair, (lx0, land_y0, zh - 0.10), (lx1, land_y0 + s_w, zh),
                  M_CONCRETE)
+            # landing guard: ONE mitred U (legs + far run) around the
+            # plate's free edges; the near edge is fully occupied by the
+            # two flight heads, whose extended rails cross the legs here.
+            stair.tag = 'rails'
+            el2.emit_railing_path(stair, [
+                (lx0 + 0.05, land_y0 + 0.03),
+                (lx0 + 0.05, land_y0 + s_w - 0.055),
+                (lx1 - 0.05, land_y0 + s_w - 0.055),
+                (lx1 - 0.05, land_y0 + 0.03)],
+                z0=zh + 0.002, height=0.92, post_every=1.0, tag='rails')
+            stair.tag = 'steps'
             # flight B (inner lane): BASE AT THE SAME (near) EDGE of the plate
             # -- a true switchback: top out beside it, turn around on the
             # plate, and board the upper flight from where you stand. (Basing
             # it at the FAR edge put every upper flight's first riser across
             # the plate from the arriving walker: consistently un-ascendable.)
             flight(laneB_x0, land_y0 - 0.006, y_arr, zh, zt, 0.10, 0.12)
+            flight_rail(laneB_x0, land_y0 - 0.006, y_arr, zh, zt, 0.12, 0.02)
 
         # four continuous posts carry the stacked half-landings, grade -> top.
         # UNDER the plate corners and embedded 20 mm into the underside --
@@ -880,6 +913,32 @@ def build_dingbat(p, rng):
                 pts9 = [(lo9, y_out), (hi9, y_out)]
             el2.emit_railing_path(walk, pts9, z0=hi3, height=0.92,
                                   post_every=1.5, tag='loggia')
+        # the stair-side extension JUTS past the gable end: it must be
+        # railed on ALL its free sides (minimall-deck rule) -- ONE mitred
+        # path: a leg buried into the rear wall corner, the back-edge run,
+        # and the end return. On the tower's TOP floor (which only
+        # RECEIVES the inner-lane flight) the same path continues along
+        # the outer edge over the idle outer lane -- one member, no butt
+        # joints. Left switchback units stand against the slab end, so
+        # that return stops where the kit's own flight rails take over.
+        if p["stair_side"] == 'left':
+            jut9 = [(0.10, D - 0.03), (0.10, D + 0.055),
+                    (wx0 + 0.055, D + 0.055)]
+            if st_style == 'switchback':
+                jut9.append((wx0 + 0.055, D + 1.02))
+            elif st_style == 'tower' and top9:
+                jut9 += [(wx0 + 0.055, y_out), (-s_w2 - 0.07, y_out)]
+            else:
+                jut9.append((wx0 + 0.055, y_out))
+        else:
+            jut9 = [(W - 0.10, D - 0.03), (W - 0.10, D + 0.055),
+                    (wx1 - 0.055, D + 0.055)]
+            if st_style == 'tower' and top9:
+                jut9 += [(wx1 - 0.055, y_out), (W + s_w2 + 0.07, y_out)]
+            else:
+                jut9.append((wx1 - 0.055, y_out))
+        el2.emit_railing_path(walk, jut9, z0=hi3, height=0.92,
+                              post_every=1.5, tag='loggia')
     walkway_ob = walk.to_object("LA_Dingbat_Walkway", mats)
 
     # ---- INTERIOR MODE (rule 1): inner wall liners, slabs, partitions,
