@@ -47,7 +47,7 @@ import bpy
 from .. import params
 from .. import topology
 from . import elements as el2
-from .storefront import emit_security_bars, emit_storefront_bay
+from .storefront import emit_rollup, emit_security_bars, emit_storefront_bay
 from ..geom import (
     _MATS, _Shell, _Wall, _box, _material, _sheared_box, _wall_solid,
     M_CONCRETE, M_GLASS, M_METAL, M_SHUTTER, M_SIGN_A, M_SIGN_B, M_SIGN_C,
@@ -1110,28 +1110,49 @@ def build_minimall(p, rng):
                                 piers=(True, i == open_idx[-1]))
             # kit extras (rpg-a1ep variants): iron bars, awnings, blades.
             roll9 = rng.random()
+            aw_here = False
             if roll9 < 0.22:
-                emit_security_bars(shell, o0 + 0.05, o1 - 0.05, 0.0,
-                                   bh9 + 0.10, Z_SF - 0.14)
+                # security is per-TENANT: bar every glazed span AND give
+                # the door its own roll-up (mostly raised on open bays,
+                # sometimes dropped) -- never a grille over one opening
+                # with the next one naked, and never a door barred shut.
+                (d0b, d1b) = doors_m[i]
+                for (g0b, g1b) in ((o0 + 0.05, d0b - 0.05),
+                                   (d1b + 0.05, o1 - 0.05)):
+                    if g1b - g0b > 0.30:
+                        emit_security_bars(shell, g0b, g1b, 0.0,
+                                           bh9 + 0.10, Z_SF - 0.14)
+                emit_rollup(shell, d0b + 0.07, d1b - 0.07, -0.012,
+                            min(2.2, Z_SF - 0.35) + 0.42,
+                            open_frac=0.75 if rng.random() < 0.6 else 0.0,
+                            housing=True, z0=0.02)
             elif roll9 < 0.48 and (i in shop2 or
                                    not (office or cd >= 0.5)):
                 aw9 = o1 - o0 - 0.12
                 if aw9 > 1.1:
                     # ABOVE the window head (not against the glass), spanning
                     # the whole bay's window row.
+                    aw_here = True
                     ap9 = dict(width=aw9, depth=0.95, drop=0.45,
                                valance=0.24, stripes=True)
                     for ob9 in el2.build_canvas_awning(ap9, rng):
                         ob9.location = (o0 + 0.06, -0.048, Z_SF + 0.04)
                         sf_extra_obs.append(ob9)
             if rng.random() < 0.18:
+                bx9, tz9 = o0 + 0.06, Z_SF - 0.15
+                if aw_here:
+                    # awning + blade on one bay: the blade would thread the
+                    # awning's skirt -- shove it WELL clear horizontally
+                    # (centred on the tiled pier beside the opening) and
+                    # drop it a touch below the fabric's underside.
+                    bx9, tz9 = o0 - 0.094, Z_SF - 0.45
                 bp9 = dict(height=1.7, projection=0.75, panels=3,
-                           top_z=Z_SF - 0.15)
+                           top_z=tz9)
                 for ob9 in el2.build_blade_sign(bp9, rng):
                     ob9.rotation_euler = (0.0, 0.0, -1.5707963)
                     # mount plate ON the outer wall face (5 mm embed), the
                     # blade projecting out -- never buried inside the wall.
-                    ob9.location = (o0 + 0.06, 0.005, 0.0)
+                    ob9.location = (bx9, 0.005, 0.0)
                     sf_extra_obs.append(ob9)
 
         # TWO-STORY SHOP structure: real floor slab (with a stairwell), full-
@@ -1727,11 +1748,16 @@ def build_minimall(p, rng):
     # west end is OPEN AIR -- in C/E layouts that space is the west court
     # arm's mass, and both the deck and the access stair ran through it.
     x_deck_w = 0.002 if west_blocked else (wx + x_deck0)
-    stair_x = (cd + 0.7, cd + 1.9) if west_blocked else (-1.35, -0.15)
+    # stair sits on the western overhang, which starts at wx (nonzero on
+    # the angled layout -- forgetting it left the stair floating in the
+    # cut-off corner, landing on nothing).
+    stair_x = (cd + 0.7, cd + 1.9) if west_blocked \
+        else (wx - 1.35, wx - 0.15)
     if p.get("stair_style", 'straight') == 'switchback':
         # rail gap = the EXIT flight's span only (it lands ON the wider
         # overhang; the rest of the deck edge stays guarded).
-        stair_x = (cd + 0.7, cd + 3.0) if west_blocked else (-2.48, -1.36)
+        stair_x = (cd + 0.7, cd + 3.0) if west_blocked \
+            else (wx - 2.48, wx - 1.36)
     deck_segs = _seg_subtract(split_segs(x_deck_w, Wm), shop2_spans)
     if has_canopy:
         for (sx0, sx1) in deck_segs:
@@ -1800,7 +1826,7 @@ def build_minimall(p, rng):
             # wrap its BACK edge too, ending buried inside the west wall
             # corner (crosses y=0 into the wall solid: a real join, not a
             # free end floating by the corner).
-            jut = (office and not west_blocked and layout != 'angled'
+            jut = (office and not west_blocked
                    and abs(s0 - x_deck_w) < 0.05 and wx - xi0 > 0.35)
             if jut:
                 bx9 = min(wx + 0.13, xi1)

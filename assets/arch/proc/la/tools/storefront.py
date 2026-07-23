@@ -392,6 +392,13 @@ def build_storefront_bay(p, rng):
         emit_rollup(sh, d0 + 0.07, d1 - 0.07, -0.012,
                     min(2.2, head - 0.35) + 0.42, open_frac=0.0,
                     housing=True, z0=0.02)
+        # security is a whole-tenant decision: nobody rolls steel over
+        # the door and leaves the display glass naked -- bar the
+        # flanking glazed spans too.
+        for (g0, g1) in ((0.05, d0 - 0.05), (d1 + 0.05, w - 0.05)):
+            if g1 - g0 > 0.30:
+                emit_security_bars(sh, g0, g1, 0.0, bh + 0.10,
+                                   head - 0.14)
     else:
         emit_storefront_bay(sh, 0.0, w, 0.0, door, head, bulkhead=bh,
                             tile=p["tile"], glass=True,
@@ -403,7 +410,20 @@ def build_storefront_bay(p, rng):
                         open_frac=0.6, housing=True, z0=bh + 0.03)
 
     if p["bars"] and ru in ('none', 'half'):
-        emit_security_bars(sh, 0.05, w - 0.05, 0.0, bh + 0.10, head - 0.14)
+        # bars cover the glazing; the door slot is NOT grilled shut --
+        # it gets its own (mostly raised) roll-up when nothing else
+        # already guards it, so every opening is secured and none are
+        # permanently blocked.
+        spans_b = [(0.05, w - 0.05)] if door is None else \
+            [(0.05, door[0] - 0.05), (door[1] + 0.05, w - 0.05)]
+        for (g0, g1) in spans_b:
+            if g1 - g0 > 0.30:
+                emit_security_bars(sh, g0, g1, 0.0, bh + 0.10,
+                                   head - 0.14)
+        if door is not None and ru == 'none':
+            emit_rollup(sh, door[0] + 0.07, door[1] - 0.07, -0.012,
+                        min(2.2, head - 0.35) + 0.42, open_frac=0.75,
+                        housing=True, z0=0.02)
 
     out = [sh.to_object("LA_Asm_Storefront", [_material(n) for n in _MATS])]
 
@@ -424,13 +444,22 @@ def build_storefront_bay(p, rng):
             out.append(o)
 
     if p["blade"]:
+        bx, by = -0.02, 0.030
+        tz = head + (0.62 if not two else 1.6)
+        if p["awning"] != 'none' and ru != 'none':
+            # the full-span over-rollup awning starts at x=0.02, so the
+            # default mount threads its skirt: shove the blade WELL clear
+            # horizontally (centred on the left pier) and drop it a touch.
+            # y=0.026 dodges the pier box's +0.03 rear plane (coplanar).
+            bx, by = -0.094, 0.026
+            tz -= 0.32
         bp = dict(height=min(2.2, head - 0.6), projection=0.85, panels=4,
-                  top_z=head + (0.62 if not two else 1.6))
+                  top_z=tz)
         for o in el.build_blade_sign(bp, rng):
             o.rotation_euler = (0.0, 0.0, -1.5707963)
             # plate mounts on the backing's outer face (front at y=0.024):
             # 6 mm embedded, arms + blade projecting outward.
-            o.location = (-0.02, 0.030, 0.0)
+            o.location = (bx, by, 0.0)
             out.append(o)
 
     if p["awning"] != 'none':
