@@ -46,7 +46,8 @@ import bpy
 
 from .. import params
 from .. import topology
-from .storefront import emit_storefront_bay
+from . import elements as el2
+from .storefront import emit_security_bars, emit_storefront_bay
 from ..geom import (
     _MATS, _Shell, _Wall, _box, _material, _sheared_box, _wall_solid,
     M_CONCRETE, M_GLASS, M_METAL, M_SHUTTER, M_SIGN_A, M_SIGN_B, M_SIGN_C,
@@ -79,7 +80,8 @@ def _tenant_bays(run_len, n, end_pier=0.30, mid_pier=0.60):
 
 def _storefront_classify(bays, doors, fates, z_top, office,
                          void_span=None, recessed=frozenset(), wt=0.15,
-                         run_w=1e9, high_bk=None, barred_wins=None):
+                         run_w=1e9, high_bk=None, barred_wins=None,
+                         shop2=frozenset()):
     """Classifier factory for one storefront wall (u = along-run coord).
 
     fates[i]: 'open' | 'shut' | 'void' (checkpoint / fortified bays).
@@ -132,6 +134,12 @@ def _storefront_classify(bays, doors, fates, z_top, office,
                     return 'wall'          # bulkhead under the glass
                 return 'window'
             if office and Z_FAS - 1e-6 <= zc0 < Z_OHED - 1e-6:
+                if i in shop2:
+                    # two-story shop: ribbon window only (no balcony door --
+                    # the deck is broken in front of this bay).
+                    if Z_OSIL - 1e-6 <= zc0:
+                        return 'window'
+                    return 'wall'
                 # floor-2: balcony door + ribbon window per bay.
                 d0, d1 = doors[i]
                 if d0 - 1e-6 <= u0 < d1 - 1e-6:
@@ -673,6 +681,31 @@ def build_minimall(p, rng):
     # glazing sits on 0.9 m masonry instead of 0.25 m; shutters stop there
     # instead of dropping to grade.
     high_bk_m = [rng.random() < p["high_bulkhead"] for _ in bays_m]
+
+    # TWO-STORY SHOPS (rpg-a1ep integration): open bays promoted to a
+    # two-level unit -- real floor slab + demising walls + internal stair,
+    # no balcony door, and the deck/rail run BREAKS across their front.
+    shop2 = set()
+    if p["office_strip"]:
+        for i9, f9 in enumerate(fates_m):
+            if f9 == 'open' and rng.random() < p.get("two_story_shops", 0.25):
+                shop2.add(i9)
+    shop2_spans = [(bays_m[i9][2] - 0.002, bays_m[i9][3] + 0.002)
+                   for i9 in sorted(shop2)]
+
+    def _seg_subtract(segs, cuts):
+        out9 = []
+        for (s0, s1) in segs:
+            cur = s0
+            for (c0, c1) in sorted(cuts):
+                if c1 < s0 or c0 > s1:
+                    continue
+                if c0 - 0.002 > cur:
+                    out9.append((cur, c0 - 0.002))
+                cur = max(cur, c1 + 0.002)
+            if s1 > cur:
+                out9.append((cur, s1))
+        return out9
     high_bk_w = [rng.random() < p["high_bulkhead"] for _ in bays_w]
     # rear LOADING DOCKS: heavy sectional door at truck-sill height per
     # tenant, seeded ~40% inset into a recessed dock well.
@@ -758,7 +791,9 @@ def build_minimall(p, rng):
     if office:
         for i, (_b0, _b1, o0b, o1b) in enumerate(bays_m):
             sel = p["balconies"]
-            if sel == 'mixed':
+            if i in shop2:
+                sel = 'run'                # two-story shop: flat run, and
+            elif sel == 'mixed':           # the rail breaks there anyway
                 sel = rng.choice(['run', 'projecting', 'recessed'])
             if sel == 'projecting' and corner and o1b > Wm - cd - 0.6:
                 sel = 'recessed'      # would hang into the east wing deck
@@ -1013,6 +1048,7 @@ def build_minimall(p, rng):
     # ---- storefront walls --------------------------------------------------
     shell.tag = 'storefront'
     cls_m = _storefront_classify(bays_m, doors_m, fates_m, Z_SF, office,
+                                 shop2=frozenset(shop2),
                                  void_span=(a0, a1) if anchor_on else None,
                                  recessed=recessed, wt=wt, run_w=Wm,
                                  high_bk=high_bk_m, barred_wins=bw_m)
@@ -1042,6 +1078,7 @@ def build_minimall(p, rng):
     # aluminium mullions/transom/head channel, entry door frame -- applied
     # PROUD of the wall plane on every OPEN front bay. Left pier per bay
     # (plus a right pier on the last) so adjacent dressings never overlap.
+    sf_extra_obs = []
     if p.get("storefront_detail", True):
         open_idx = [i for i, f9 in enumerate(fates_m) if f9 == 'open']
         sf_styles = ('checker', 'tile', 'stucco', 'panel')
@@ -1056,6 +1093,68 @@ def build_minimall(p, rng):
                                 bulkhead=bh9, bulkhead_style=style9,
                                 glazing=glz9,
                                 piers=(True, i == open_idx[-1]))
+            # kit extras (rpg-a1ep variants): iron bars, awnings, blades.
+            roll9 = rng.random()
+            if roll9 < 0.22:
+                emit_security_bars(shell, o0 + 0.05, o1 - 0.05, 0.0,
+                                   bh9 + 0.10, Z_SF - 0.14)
+            elif roll9 < 0.48 and (i in shop2 or
+                                   not (office or cd >= 0.5)):
+                aw9 = min(o1 - o0 - 0.8, 3.4)
+                if aw9 > 1.1:
+                    ap9 = dict(width=aw9, depth=0.95, drop=0.45,
+                               valance=0.24, stripes=True)
+                    for ob9 in el2.build_canvas_awning(ap9, rng):
+                        ob9.location = (o0 + 0.3, -0.03, Z_SF - 0.55)
+                        sf_extra_obs.append(ob9)
+            if rng.random() < 0.18:
+                bp9 = dict(height=1.7, projection=0.75, panels=3,
+                           top_z=Z_SF - 0.15)
+                for ob9 in el2.build_blade_sign(bp9, rng):
+                    ob9.rotation_euler = (0.0, 0.0, -1.5707963)
+                    ob9.location = (o0 + 0.06, 0.30, 0.0)
+                    sf_extra_obs.append(ob9)
+
+        # TWO-STORY SHOP structure: real floor slab (with a stairwell), full-
+        # height demising walls, a rear partition, an internal straight
+        # stair, and a mullioned floor-2 shopfront over the ribbon window.
+        n_st9 = max(3, int(round(Z_FAS / 0.185)))
+        run9 = 0.27 * n_st9
+        for i in sorted(shop2):
+            (b0, b1, o0, o1) = bays_m[i]
+            dep9 = min(p["depth"] - 0.6, 7.4)
+            wx0, wx1 = b0 + 0.16, b0 + 1.30        # stairwell strip (left)
+            wy0 = 1.0 + run9 * 0.45                # well over the upper run
+            shell.tag = 'slabs'
+            # rear slab OVERLAPS the front slab 60 mm with 4 mm z-insets
+            # (butted boxes shared faces -> non-manifold), and its far end
+            # tucks inside the rear wall.
+            _box(shell, (b0 + 0.05, wt + 0.06, Z_FAS - 0.16),
+                 (b1 - 0.05, wy0, Z_FAS + 0.02), M_CONCRETE)
+            _box(shell, (wx1 + 0.06, wy0 - 0.06, Z_FAS - 0.156),
+                 (b1 - 0.055, dep9 + 0.03, Z_FAS + 0.016), M_CONCRETE)
+            shell.tag = 'demising'
+            # demising walls run PAST the rear plane (ends hidden inside the
+            # rear wall); the rear wall spans strictly BETWEEN them with its
+            # ends embedded in their thickness -- no shared corner planes.
+            _wall_solid(shell, 'y', b0 + 0.06, wt + 0.06, dep9 + 0.04, 0.0,
+                        Z_OHED - 0.12, 0.09, None, M_STUCCO)
+            _wall_solid(shell, 'y', b1 - 0.15, wt + 0.06, dep9 + 0.04, 0.0,
+                        Z_OHED - 0.12, 0.09, None, M_STUCCO)
+            _wall_solid(shell, 'x', dep9, b0 + 0.10, b1 - 0.11, 0.0,
+                        Z_OHED - 0.12, 0.09, None, M_STUCCO)
+            shell.tag = 'steps'
+            _flight_straight(shell, wx0, wx1, 1.0, 1.0 + run9,
+                             0.0, Z_FAS - 0.14, 0.0, 0.14)
+            # floor-2 shopfront: sill band + mullions over the ribbon.
+            shell.tag = 'storefront'
+            _box(shell, (o0 + 0.014, -0.035, Z_OSIL - 0.055),
+                 (o1 - 0.014, 0.03, Z_OSIL + 0.006), M_METAL)
+            nm9 = max(2, int(round((o1 - o0) / 1.0)))
+            for k9 in range(nm9 + 1):
+                mx9 = o0 + 0.014 + (o1 - o0 - 0.028) * k9 / nm9
+                _box(shell, (mx9 - 0.024, -0.032, Z_OSIL + 0.02),
+                     (mx9 + 0.024, 0.05, Z_OHED - 0.09), M_METAL)
     # court-arm storefronts + their outer/south walls.
     for xa in xarms:
         ab, ad, af, ah = xa['bays'], xa['doors'], xa['fates'], xa['high']
@@ -1601,7 +1700,10 @@ def build_minimall(p, rng):
     # arm's mass, and both the deck and the access stair ran through it.
     x_deck_w = 0.002 if west_blocked else (wx + x_deck0)
     stair_x = (cd + 0.7, cd + 1.9) if west_blocked else (-1.35, -0.15)
-    deck_segs = split_segs(x_deck_w, Wm)
+    if p.get("stair_style", 'straight') == 'switchback':
+        # the switchback footprint is ~2.3 m wide: widen the deck-rail gap.
+        stair_x = (cd + 0.7, cd + 3.0) if west_blocked else (-2.5, -0.15)
+    deck_segs = _seg_subtract(split_segs(x_deck_w, Wm), shop2_spans)
     if has_canopy:
         for (sx0, sx1) in deck_segs:
             _box(can, (sx0, -cd, deck_lo), (sx1, -0.002, deck_top),
@@ -1627,11 +1729,15 @@ def build_minimall(p, rng):
                 p0, p1 = o0 + 0.35, o1 - 0.35
                 _box(can, (p0, -cd - 0.95, deck_lo + 0.10),
                      (p1, -cd - 0.002, deck_top), M_CONCRETE)
-                # ONE welded U-rail with mitred corners (the 3-piece
-                # frame left visible seams).
+                # picket rail wrap: ONE mitred U path (legs + front run
+                # merged at the corners -- no overshooting butt joints).
                 can.tag = 'loggia'
-                _rail_u(can, p0 + 0.02, p1 - 0.02, -cd - 0.93, -cd - 0.06,
-                        deck_top + 0.002, deck_top + 0.92)
+                el2.emit_railing_path(
+                    can, [(p0 + 0.045, -cd - 0.10),
+                          (p0 + 0.045, -cd - 0.895),
+                          (p1 - 0.045, -cd - 0.895),
+                          (p1 - 0.045, -cd - 0.10)],
+                    z0=deck_top + 0.002, height=0.92, post_every=1.4)
             elif sel == 'recessed' and not interior_on:
                 # loggia floor: the deck continues INTO the recess (in
                 # interior mode the office floor slab already IS it).
@@ -1655,6 +1761,7 @@ def build_minimall(p, rng):
         # the rail floated across the anchor / mid-arm deck CUTS
         rail_segs = [s9 for (r0, r1) in rail_segs
                      for s9 in split_segs(r0, r1)]
+        rail_segs = _seg_subtract(rail_segs, shop2_spans)
         if west_blocked:
             gapped = []
             for (r0, r1) in rail_segs:
@@ -1667,14 +1774,14 @@ def build_minimall(p, rng):
                     gapped.append((stair_x[1] + 0.02, r1))
             rail_segs = gapped
         for (r0, r1) in rail_segs:
-            if r1 - r0 > 0.1:
-                _wall_solid(can, 'x', -cd + 0.02, r0, r1,
-                            deck_top + 0.002, deck_top + 0.92, 0.12, None,
-                            M_STUCCO)
+            if r1 - r0 > 0.35:
+                el2.emit_railing(can, r0 + 0.02, r1 - 0.02, axis='x',
+                                 cross=-cd + 0.075, z0=deck_top + 0.002,
+                                 height=0.92, post_every=1.8)
         if corner:
-            _wall_solid(can, 'y', Wm - cd + 0.02, -Wy + 0.02, -cd - 0.06,
-                        deck_top + 0.002, deck_top + 0.92, 0.12, None,
-                        M_STUCCO)
+            el2.emit_railing(can, -Wy + 0.05, -cd - 0.10, axis='y',
+                             cross=Wm - cd + 0.075, z0=deck_top + 0.002,
+                             height=0.92, post_every=1.8)
     if not has_canopy:
         pass                          # no canopy: no piers, no posts
     elif p["arcade"]:
@@ -1792,16 +1899,42 @@ def build_minimall(p, rng):
     # ---- office-strip access stair (straight, footed stringers) ------------
     stair_ob = None
     if office:
-        stair = _Shell()
+        st_style = p.get("stair_style", 'straight')
         rise = Z_FAS
-        run = 0.26 * max(3, int(round(rise / 0.185)))
-        _flight_straight(stair, stair_x[0], stair_x[1], -cd - run, -cd,
-                         0.0, rise, 0.0, 0.16)
-        # B1.3 (rpg-ro7o): welded pitched handrails on both stringers + a level
-        # return over the deck landing.
-        _flight_railing(stair, stair_x[0], stair_x[1], -cd - run, -cd,
-                        0.0, rise, 0.16)
-        stair_ob = stair.to_object("LA_MiniMall_Stair", mats)
+        if st_style == 'straight':
+            stair = _Shell()
+            run = 0.26 * max(3, int(round(rise / 0.185)))
+            _flight_straight(stair, stair_x[0], stair_x[1], -cd - run, -cd,
+                             0.0, rise, 0.0, 0.16)
+            # B1.3 (rpg-ro7o): welded pitched handrails on both stringers +
+            # a level return over the deck landing.
+            _flight_railing(stair, stair_x[0], stair_x[1], -cd - run, -cd,
+                            0.0, rise, 0.16)
+            stair_ob = stair.to_object("LA_MiniMall_Stair", mats)
+        elif st_style in ('parapet', 'curb'):
+            n9 = max(3, int(round(rise / 0.185)))
+            run9 = 0.27 * n9
+            for ob9 in el2.build_stucco_stair(
+                    dict(width=1.1, height=rise, cheek=st_style,
+                         rail_height=0.9), rng):
+                ob9.name = "LA_MiniMall_Stair"
+                ob9.location = (stair_x[0], -cd - run9, 0.0)
+                sf_extra_obs.append(ob9)
+        else:                                       # switchback
+            w9, gap9 = 1.0, 0.06
+            n9 = max(6, int(round(rise / 0.185)))
+            n1_9 = (n9 + 1) // 2
+            n2_9 = n9 - n1_9
+            run1_9 = 0.27 * n1_9
+            ytop9 = run1_9 + 0.02 - 0.27 * n2_9
+            for ob9 in el2.build_switchback_stair(
+                    dict(width=w9, height=rise, rail_height=0.95), rng):
+                ob9.name = "LA_MiniMall_Stair"
+                # rotate 180 so the return flight tops out FACING the deck.
+                ob9.rotation_euler = (0.0, 0.0, 3.14159265)
+                ob9.location = (stair_x[0] + 2 * w9 + gap9 + 0.05,
+                                -cd + ytop9 - 0.02, 0.0)
+                sf_extra_obs.append(ob9)
 
     # ---- walkway + parking lot ---------------------------------------------
     lot = _Shell()
@@ -2365,7 +2498,7 @@ def build_minimall(p, rng):
         interior_obs.append(hatch.to_object("LA_MiniMall_Hatch", mats))
 
     out = [body, anchor_ob, canopy_ob, stair_ob, lot_ob, sign_ob,
-           story_ob] + interior_obs
+           story_ob] + interior_obs + sf_extra_obs
     out = [ob for ob in out if ob is not None]
     for ob in out:
         ob["ferrum_lightmap_res"] = 0 if ob in (sign_ob, story_ob) else 128
@@ -2377,6 +2510,10 @@ SPEC = [
     dict(name="tenants", type='INT', default=5, min=2, max=20),
     dict(name="storefront_detail", type='BOOL', default=True,
          desc="Storefront-bay dressing on open tenant bays"),
+    dict(name="two_story_shops", type='FLOAT', default=0.25, min=0.0,
+         max=0.6, desc="Fraction of open bays converted to two-story shops "
+                       "(office strip only): real floor slab, demising "
+                       "walls, internal stair; balcony run BREAKS there"),
     dict(name="storefront_style", type='ENUM', default='mixed',
          items=('mixed', 'checker', 'tile', 'stucco', 'panel'),
          desc="Bulkhead style (mixed = per-bay variety)"),
@@ -2439,6 +2576,10 @@ SPEC = [
     dict(name="corner_door", type='BOOL', default=False,
          desc="Mitred 45-degree corner doorway at the west street corner "
               "(bar/L layouts)"),
+    dict(name="stair_style", type='ENUM', default='straight',
+         items=('straight', 'switchback', 'parapet', 'curb'),
+         desc="Office access stair: steel straight / steel switchback / "
+              "stucco parapet / stucco curb"),
     dict(name="office_strip", type='BOOL', default=False,
          desc="Full second storey: balcony deck over the canopy, stair "
               "from the lot"),

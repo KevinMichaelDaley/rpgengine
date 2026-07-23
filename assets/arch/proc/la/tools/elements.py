@@ -88,6 +88,118 @@ def _bar(shell, stations, w, h, mat, tag=None, axis='x', center=0.0):
         shell.quad(an, bn, cn, dn, mat, tag)
 
 
+def _plan_bar(sh, pts, z, w, h, mat, tag=None):
+    """Rectangular-section bar following a PLAN polyline at constant height
+    (centreline z): one ring per point, offset along the mitre bisector
+    (scaled 1/cos(half-angle)) so corners are true mitres -- ONE welded
+    member, no overshooting butt joints. Collinear points subdivide for
+    even density. All faces planar (horizontal tops/bottoms, vertical
+    sides through two plan points)."""
+    import math as _m
+    n = len(pts)
+    if n < 2:
+        return
+    rings = []
+    for i in range(n):
+        (px, py) = pts[i]
+        if i == 0:
+            dx, dy = pts[1][0] - px, pts[1][1] - py
+            L = _m.hypot(dx, dy)
+            nx, ny = -dy / L, dx / L
+            ox, oy = nx * w * 0.5, ny * w * 0.5
+        elif i == n - 1:
+            dx, dy = px - pts[i - 1][0], py - pts[i - 1][1]
+            L = _m.hypot(dx, dy)
+            nx, ny = -dy / L, dx / L
+            ox, oy = nx * w * 0.5, ny * w * 0.5
+        else:
+            d0x, d0y = px - pts[i - 1][0], py - pts[i - 1][1]
+            d1x, d1y = pts[i + 1][0] - px, pts[i + 1][1] - py
+            L0, L1 = _m.hypot(d0x, d0y), _m.hypot(d1x, d1y)
+            n0x, n0y = -d0y / L0, d0x / L0
+            n1x, n1y = -d1y / L1, d1x / L1
+            bx_, by_ = n0x + n1x, n0y + n1y
+            bl = _m.hypot(bx_, by_)
+            if bl < 1e-6:                          # U-turn: fall back
+                ox, oy = n0x * w * 0.5, n0y * w * 0.5
+            else:
+                scale = (w * 0.5) / max(0.2, (bx_ * n0x + by_ * n0y) / bl)
+                ox, oy = bx_ / bl * scale, by_ / bl * scale
+        rings.append(((px + ox, py + oy, z + h * 0.5),
+                      (px - ox, py - oy, z + h * 0.5),
+                      (px - ox, py - oy, z - h * 0.5),
+                      (px + ox, py + oy, z - h * 0.5)))
+    (a0, b0, c0, d0) = rings[0]
+    sh.quad(a0, b0, c0, d0, mat, tag)              # start cap
+    for k in range(n - 1):
+        (a1, b1, c1, d1) = rings[k]
+        (a2, b2, c2, d2) = rings[k + 1]
+        sh.quad(a1, a2, b2, b1, mat, tag)          # top
+        sh.quad(d1, c1, c2, d2, mat, tag)          # bottom
+        sh.quad(b1, b2, c2, c1, mat, tag)          # inner side
+        sh.quad(a1, d1, d2, a2, mat, tag)          # outer side
+    (an, bn, cn, dn) = rings[-1]
+    sh.quad(an, dn, cn, bn, mat, tag)              # end cap
+
+
+def emit_railing_path(sh, pts, z0=0.0, height=1.0, spacing=0.125,
+                      size=0.018, style='plain', post_every=1.6,
+                      tag='loggia'):
+    """Picket railing along a PLAN polyline: the top/bottom rails are ONE
+    mitred _plan_bar each (corners merged, nothing overshoots), pickets at
+    even stations per segment, posts at every corner + spaced along runs."""
+    import math as _m
+    keep = sh.tag
+    sh.tag = tag
+    rail_h = 0.045
+    z_bot = z0 + 0.10
+    z_top = z0 + height - rail_h * 0.5
+    # subdivided station list (verts at every picket for even density).
+    stations = [pts[0]]
+    seg_info = []
+    for i in range(len(pts) - 1):
+        (ax, ay), (bx, by) = pts[i], pts[i + 1]
+        L = _m.hypot(bx - ax, by - ay)
+        n_p = max(2, int(round(L / spacing)))
+        seg_info.append((ax, ay, bx, by, L, n_p))
+        for k in range(1, n_p + 1):
+            stations.append((ax + (bx - ax) * k / n_p,
+                             ay + (by - ay) * k / n_p))
+    _plan_bar(sh, stations, z_top, 0.045, rail_h, M_METAL)
+    _plan_bar(sh, stations, z_bot, 0.045, rail_h, M_METAL)
+    if style == 'mid_rail':
+        _plan_bar(sh, stations, (z_top + z_bot) * 0.5, 0.032, 0.032,
+                  M_METAL)
+    zp0 = z_bot - rail_h * 0.5 + 0.012
+    zp1 = z_top + rail_h * 0.5 - 0.012
+    for (ax, ay, bx, by, L, n_p) in seg_info:      # pickets per segment
+        for k in range(1, n_p):
+            px = ax + (bx - ax) * k / n_p
+            py = ay + (by - ay) * k / n_p
+            _box(sh, (px - size * 0.5, py - size * 0.5, zp0),
+                 (px + size * 0.5, py + size * 0.5, zp1), M_METAL)
+            if style == 'collars':
+                c = size * 1.9
+                zc = (zp0 + zp1) * 0.5
+                _box(sh, (px - c * 0.5, py - c * 0.5, zc - c * 0.6),
+                     (px + c * 0.5, py + c * 0.5, zc + c * 0.6), M_METAL)
+    pw = 0.05
+    for (px, py) in pts:                           # corner + end posts
+        _box(sh, (px - pw * 0.5, py - pw * 0.5, z0),
+             (px + pw * 0.5, py + pw * 0.5, z0 + height + 0.025), M_METAL)
+    for (ax, ay, bx, by, L, n_p) in seg_info:      # intermediate posts
+        n_po = int(L / post_every)
+        for k in range(1, n_po + 1):
+            t = k * post_every / L
+            if t > 0.94:
+                continue
+            px, py = ax + (bx - ax) * t, ay + (by - ay) * t
+            _box(sh, (px - pw * 0.5, py - pw * 0.5, z0),
+                 (px + pw * 0.5, py + pw * 0.5, z0 + height + 0.025),
+                 M_METAL)
+    sh.tag = keep
+
+
 def _vbar(shell, x, y, stations, s, mat, tag=None):
     """Vertical square-bar tube at plan (x, y); stations are (z, y_off)
     (y_off shifts the section centre, 0 for plumb bars). Welded rings, end
@@ -151,52 +263,67 @@ RAILING_SPEC = [
 ]
 
 
-def build_railing(p, rng):
-    """Wrought-iron picket railing run along +x, base at z=0.
-
-    Rails are single welded tubes ringed at every picket station (even
-    density) and stop 20 mm INSIDE the end posts (never coplanar with a post
-    face). Pickets/posts/collars are closed bars interpenetrating the rails
-    by >= 8 mm -- no shared planes anywhere."""
-    L, H = p["length"], p["height"]
-    ps, s = p["picket_spacing"], p["picket_size"]
+def emit_railing(sh, u0, u1, axis='x', cross=0.0, z0=0.0, height=1.0,
+                 spacing=0.125, size=0.018, style='plain', post_every=1.6,
+                 tag='loggia'):
+    """Wrought-iron picket railing EMITTER: run along @p axis from u0..u1
+    at across-axis line @p cross, base z0. Rails are single welded tubes
+    ringed at every picket station and stop 20 mm inside the end posts;
+    pickets/posts/collars interpenetrate the rails >= 8 mm -- no shared
+    planes. The assemblies (balcony decks, walkways) call this directly."""
+    keep = sh.tag
+    sh.tag = tag
+    L = u1 - u0
     rail_w, rail_h = 0.045, 0.045
-    z_bot = 0.10                                   # bottom rail centreline
-    z_top = H - rail_h * 0.5                       # top rail centreline
-    sh = _Shell()
-    sh.tag = 'loggia'
+    z_bot = z0 + 0.10
+    z_top = z0 + height - rail_h * 0.5
 
-    n_pick = max(2, int(round(L / ps)))
-    xs = [L * k / n_pick for k in range(n_pick + 1)]
-    # rails end 20 mm inside the end posts (posts are ~50 mm wide at 0 / L).
-    r_st = [(0.02, 0.0)] + [(x, 0.0) for x in xs[1:-1]] + [(L - 0.02, 0.0)]
-    _bar(sh, [(u, z + z_top) for (u, z) in r_st], rail_w, rail_h, M_METAL)
-    _bar(sh, [(u, z + z_bot) for (u, z) in r_st], rail_w, rail_h, M_METAL)
-    if p["style"] == 'mid_rail':
+    def bx(u, half_u, half_c, za, zb, mat):
+        if axis == 'x':
+            _box(sh, (u - half_u, cross - half_c, za),
+                 (u + half_u, cross + half_c, zb), mat)
+        else:
+            _box(sh, (cross - half_c, u - half_u, za),
+                 (cross + half_c, u + half_u, zb), mat)
+
+    n_pick = max(2, int(round(L / spacing)))
+    us = [u0 + L * k / n_pick for k in range(n_pick + 1)]
+    r_st = [(u0 + 0.02, 0.0)] + [(u, 0.0) for u in us[1:-1]] +            [(u1 - 0.02, 0.0)]
+    _bar(sh, [(u, z_top) for (u, _z) in r_st], rail_w, rail_h, M_METAL,
+         axis=axis, center=cross)
+    _bar(sh, [(u, z_bot) for (u, _z) in r_st], rail_w, rail_h, M_METAL,
+         axis=axis, center=cross)
+    if style == 'mid_rail':
         zm = (z_top + z_bot) * 0.5
-        _bar(sh, [(u, z + zm) for (u, z) in r_st], rail_w * 0.7,
-             rail_h * 0.7, M_METAL)
+        _bar(sh, [(u, zm) for (u, _z) in r_st], rail_w * 0.7, rail_h * 0.7,
+             M_METAL, axis=axis, center=cross)
 
-    n_posts = max(1, int(round(L / p["post_every"])))
-    post_xs = {round(L * k / n_posts, 4) for k in range(n_posts + 1)}
-    zp0 = z_bot - rail_h * 0.5 + 0.012             # embedded into both rails
+    n_posts = max(1, int(round(L / post_every)))
+    post_us = {round(u0 + L * k / n_posts, 4) for k in range(n_posts + 1)}
+    zp0 = z_bot - rail_h * 0.5 + 0.012
     zp1 = z_top + rail_h * 0.5 - 0.012
-    for x in xs[1:-1]:
-        if round(x, 4) in post_xs:
+    for u in us[1:-1]:
+        if round(u, 4) in post_us:
             continue
-        _box(sh, (x - s * 0.5, -s * 0.5, zp0), (x + s * 0.5, s * 0.5, zp1),
-             M_METAL)
-        if p["style"] == 'collars':
-            c = s * 1.9
+        bx(u, size * 0.5, size * 0.5, zp0, zp1, M_METAL)
+        if style == 'collars':
+            c = size * 1.9
             zc = (zp0 + zp1) * 0.5
-            _box(sh, (x - c * 0.5, -c * 0.5, zc - c * 0.6),
-                 (x + c * 0.5, c * 0.5, zc + c * 0.6), M_METAL)
-
-    pw = max(0.05, s * 2.6)                        # posts: ground -> +25 mm
+            bx(u, c * 0.5, c * 0.5, zc - c * 0.6, zc + c * 0.6, M_METAL)
+    pw = max(0.05, size * 2.6)
     for k in range(n_posts + 1):
-        x = min(max(L * k / n_posts, pw * 0.5), L - pw * 0.5)
-        _box(sh, (x - pw * 0.5, -pw * 0.5, 0.0),
-             (x + pw * 0.5, pw * 0.5, H + 0.025), M_METAL)
+        u = min(max(u0 + L * k / n_posts, u0 + pw * 0.5), u1 - pw * 0.5)
+        bx(u, pw * 0.5, pw * 0.5, z0, z0 + height + 0.025, M_METAL)
+    sh.tag = keep
+
+
+def build_railing(p, rng):
+    """Standalone railing tool: one emit_railing run along +x at origin."""
+    sh = _Shell()
+    emit_railing(sh, 0.0, p["length"], axis='x', cross=0.0, z0=0.0,
+                 height=p["height"], spacing=p["picket_spacing"],
+                 size=p["picket_size"], style=p["style"],
+                 post_every=p["post_every"])
     return [sh.to_object("LA_Elem_Railing", [_material(n) for n in _MATS])]
 
 
@@ -555,7 +682,7 @@ SWITCHBACK_SPEC = [
 
 
 def _steel_flight(sh, x0, x1, y0, y1, z0, z1, rail_h, rail_side,
-                  ext_y=None):
+                  ext_y=None, ext_end='base'):
     """One steel flight from base (y0,z0) to top (y1,z1): channel stringers
     (sheared boxes on the nose pitch line), open-riser tread plates embedded
     10 mm into the stringers, and a post-and-bar rail on @p rail_side ('lo'
@@ -583,8 +710,11 @@ def _steel_flight(sh, x0, x1, y0, y1, z0, z1, rail_h, rail_side,
     ym = 0.5 * (y0 + y1)
     stations = [(y1, zline(y1) + rail_h), (ym, zline(ym) + rail_h),
                 (y0, zline(y0) + rail_h)]
-    if ext_y is not None:                          # landing continuation
-        stations.append((ext_y, z0 + rail_h))
+    if ext_y is not None:                          # level stub at the
+        if ext_end == 'top':                       # landing-adjacent end
+            stations.insert(0, (ext_y, z1 + rail_h))
+        else:
+            stations.append((ext_y, z0 + rail_h))
     _bar(sh, stations, 0.045, 0.045, M_METAL, axis='y', center=cx)
     n_po = max(2, int(round(abs(y1 - y0) / 1.1)))
     for k in range(n_po + 1):                      # raked-run posts
@@ -619,11 +749,12 @@ def build_switchback_stair(p, rng):
 
     # both flights join the landing at its NEAR edge (y ~ run1): A tops out
     # there ascending +y; B's base tucks 20 mm into the edge channel and
-    # ascends back -y beside A. Their rails continue onto the landing sides.
+    # ascends back -y beside A. Raked rails stop at the pitch break with a
+    # 100 mm level stub that buries inside the landing's mitred U rail.
     _steel_flight(sh, 0.0, w, 0.0, run1, 0.0, h1, rail_h, 'lo',
-                  ext_y=ly1 - 0.02)
+                  ext_y=run1 + 0.10, ext_end='top')
     _steel_flight(sh, xB0, xB0 + w, run1 + 0.02, run1 + 0.02 - run_t * n2,
-                  h1, H, rail_h, 'hi', ext_y=ly1 - 0.02)
+                  h1, H, rail_h, 'hi', ext_y=run1 + 0.10, ext_end='base')
 
     # half-landing: plate + edge channels + 4 posts to ground.
     _box(sh, (lx0 + 0.01, ly0, h1 - 0.02), (lx1 - 0.01, ly1, h1 + 0.03),
@@ -637,16 +768,20 @@ def build_switchback_stair(p, rng):
         _box(sh, (px - 0.035, py - 0.035, 0.0), (px + 0.035, py + 0.035,
              h1 - 0.015), M_METAL)
 
-    # far-edge landing rail: dropped 6 mm so the through-running side bars
-    # cross it without any shared plane; posts stop inside the bars.
+    # landing rail: ONE mitred U (side run -> far edge -> side run) via
+    # _plan_bar, slightly larger section than the flight rails so their
+    # level stubs bury inside it with no coplanar faces. Corner posts under
+    # the mitres + a mid post on the far edge.
     ztop = h1 + rail_h
-    _bar(sh, [(lx0 + 0.02, ztop - 0.006), (0.5 * (lx0 + lx1), ztop - 0.006),
-              (lx1 - 0.02, ztop - 0.006)], 0.045, 0.045, M_METAL, axis='x',
-         center=ly1 - 0.035)
-    for (px, py) in ((lx0 + 0.03, ly1 - 0.10), (lx1 - 0.03, ly1 - 0.10),
-                     (0.5 * (lx0 + lx1), ly1 - 0.035)):
+    cxA, cxB = 0.03, lx1 - 0.03                    # flight rail centrelines
+    upath = [(cxA, run1 + 0.06), (cxA, ly1 - 0.024),
+             (lx1 * 0.5, ly1 - 0.024), (cxB, ly1 - 0.024),
+             (cxB, run1 + 0.06)]
+    _plan_bar(sh, upath, ztop + 0.001, 0.049, 0.049, M_METAL)
+    for (px, py) in ((cxA, ly1 - 0.055), (cxB, ly1 - 0.055),
+                     (lx1 * 0.5, ly1 - 0.055)):
         _box(sh, (px - 0.02, py - 0.02, h1 + 0.02),
-             (px + 0.02, py + 0.02, ztop - 0.012), M_METAL)
+             (px + 0.02, py + 0.02, ztop - 0.014), M_METAL)
     return [sh.to_object("LA_Elem_Switchback", [_material(n) for n in _MATS])]
 
 

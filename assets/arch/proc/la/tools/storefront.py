@@ -132,6 +132,22 @@ def emit_rollup(sh, x0, x1, yw, z_head, open_frac=0.0, housing=True,
     sh.tag = keep
 
 
+def emit_security_bars(sh, x0, x1, yw, z0, z1):
+    """Wrought-iron security grille over a glazed span: verticals at a
+    tight pitch + two horizontal flats, standing proud of the glazing."""
+    keep = sh.tag
+    sh.tag = 'shutters'
+    nbars = max(4, int(round((x1 - x0) / 0.145)))
+    for k in range(nbars + 1):
+        bx2 = x0 + (x1 - x0) * k / nbars
+        _box(sh, (bx2 - 0.011, yw - 0.095, z0), (bx2 + 0.011, yw - 0.072,
+             z1), M_METAL)
+    for zf in (z0 + (z1 - z0) * 0.25, z0 + (z1 - z0) * 0.75):
+        _box(sh, (x0 - 0.02, yw - 0.102, zf - 0.02), (x1 + 0.02, yw - 0.066,
+             zf + 0.02), M_METAL)
+    sh.tag = keep
+
+
 # ---------------------------------------------------------------------------
 # the bay dressing emitter
 # ---------------------------------------------------------------------------
@@ -387,19 +403,7 @@ def build_storefront_bay(p, rng):
                         open_frac=0.6, housing=True, z0=bh + 0.03)
 
     if p["bars"] and ru in ('none', 'half'):
-        # wrought-iron security bars over the display glass: verticals at a
-        # tight pitch + two horizontal flats, standing proud of the glazing.
-        sh.tag = 'shutters'
-        z0b, z1b = bh + 0.10, head - 0.14
-        nbars = max(4, int(round(w / 0.145)))
-        for k in range(nbars + 1):
-            bx2 = 0.05 + (w - 0.10) * k / nbars
-            _box(sh, (bx2 - 0.011, -0.095, z0b), (bx2 + 0.011, -0.072, z1b),
-                 M_METAL)
-        for zf in (z0b + (z1b - z0b) * 0.25, z0b + (z1b - z0b) * 0.75):
-            _box(sh, (0.03, -0.102, zf - 0.02), (w - 0.03, -0.066,
-                 zf + 0.02), M_METAL)
-        sh.tag = 'storefront'
+        emit_security_bars(sh, 0.05, w - 0.05, 0.0, bh + 0.10, head - 0.14)
 
     out = [sh.to_object("LA_Asm_Storefront", [_material(n) for n in _MATS])]
 
