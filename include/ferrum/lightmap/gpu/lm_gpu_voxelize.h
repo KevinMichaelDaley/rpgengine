@@ -89,6 +89,23 @@ bool lm_gpu_voxelize_run(const lm_mesh_t *meshes, uint32_t n_meshes,
 /** @brief Free every array of @p g and zero it. NULL-safe. */
 void lm_gpu_vox_grid_free(lm_gpu_vox_grid_t *g);
 
+/**
+ * @brief Voxelize @p box at FULL resolution (@p dims unbounded -- processed
+ *        in cubic tiles internally) and sample the result at @p n_points
+ *        world positions (@p points, xyz triples): readback scales with the
+ *        point count, never the grid volume. Fills, per point: @p out_area
+ *        (accumulated surface area in its cell), @p out_albedo (n*3
+ *        area-mean reflectance, 0 where no area) and @p out_emissive (n*3,
+ *        per voxel cross-section). Tiles containing no points are skipped.
+ *        Returns false before init, on invalid arguments or GL/allocation
+ *        failure; outputs are unspecified on failure.
+ */
+bool lm_gpu_voxelize_sample(const lm_mesh_t *meshes, uint32_t n_meshes,
+                            const phys_aabb_t *box, const int dims[3],
+                            const float *points, uint32_t n_points,
+                            float *out_area, float *out_albedo,
+                            float *out_emissive);
+
 #ifdef __cplusplus
 }
 #endif

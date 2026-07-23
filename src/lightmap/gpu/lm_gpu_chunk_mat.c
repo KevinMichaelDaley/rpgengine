@@ -4,11 +4,11 @@
  *
  * The CPU pass (@ref lm_svo_voxelize) subsamples every triangle's surface and
  * scatters texture samples into the solid leaves -- minutes per chunk on big
- * scenes. Here the GPU rasterizer produces the same dense material grid in one
- * pass; each grid cell is folded into the SOLID leaf its centre queries to,
- * area-weighted, preserving the CPU semantics (diffuse area-MEAN, emissive
- * area-SUM over the voxel cross-section, neutral 0.5 fallback for solid
- * leaves no surface sample reached).
+ * scenes. Here the GPU voxelizes the chunk at FULL leaf resolution (tiled
+ * sliced-render-target rasterization, @ref lm_gpu_voxelize_sample) and every
+ * SOLID leaf reads its own cell: diffuse keeps its area-MEAN, emissive its
+ * per-cross-section SUM, and solid leaves no surface sample reached get the
+ * CPU pass's neutral 0.5 fallback.
  */
 #include "ferrum/lightmap/gpu/lm_gpu_chunk_mat.h"
 
@@ -18,9 +18,61 @@
 #include "ferrum/lightmap/gpu/lm_gpu_voxelize.h"
 #include "ferrum/lightmap/lm_svo_mip.h"
 
-/* CPU-side transient budget: refuse absurd grids and fall back to the CPU
- * subsample pass instead of thrashing (2^depth per axis; 256^3 = 16.7M ok). */
-#define LM_CHUNK_MAT_MAX_CELLS (32u * 1024u * 1024u)
+/* Explicit DFS stack entry (max depth * 7 + 8 live entries; 13 * 7 + 8 = 99). */
+typedef struct chunk_mat_walk {
+    uint32_t    node;
+    phys_aabb_t box;
+} chunk_mat_walk_t;
+
+/* Walk the SOLID leaves (root = node 0 over world_bounds; children in Morton
+ * order x=bit0, y=bit1, z=bit2). Emits each leaf's index + centre; returns
+ * the leaf count. @p out_idx/@p out_ctr may be NULL to only count. */
+static uint32_t walk_leaves(const npc_svo_grid_t *svo, uint32_t *out_idx,
+                            float *out_ctr)
+{
+    chunk_mat_walk_t stack[256];
+    uint32_t found = 0;
+    int top = 0;
+    stack[top].node = 0u;
+    stack[top].box = svo->world_bounds;
+    ++top;
+    while (top > 0) {
+        chunk_mat_walk_t e = stack[--top];
+        if (e.node >= svo->node_count)
+            continue;
+        const npc_svo_node_t *nd = &svo->nodes[e.node];
+        if (nd->occupancy == 0) {                             /* leaf */
+            if (nd->flags & NPC_SVO_FLAG_SOLID) {
+                if (out_idx != NULL) out_idx[found] = e.node;
+                if (out_ctr != NULL) {
+                    out_ctr[found * 3 + 0] = (e.box.min.x + e.box.max.x) * 0.5f;
+                    out_ctr[found * 3 + 1] = (e.box.min.y + e.box.max.y) * 0.5f;
+                    out_ctr[found * 3 + 2] = (e.box.min.z + e.box.max.z) * 0.5f;
+                }
+                ++found;
+            }
+            continue;
+        }
+        float mid[3] = { (e.box.min.x + e.box.max.x) * 0.5f,
+                         (e.box.min.y + e.box.max.y) * 0.5f,
+                         (e.box.min.z + e.box.max.z) * 0.5f };
+        for (int k = 0; k < 8; ++k) {
+            if (nd->children[k] == NPC_SVO_INVALID_NODE)
+                continue;
+            if (top >= (int)(sizeof stack / sizeof stack[0]))
+                break;                        /* cannot happen at legal depth */
+            chunk_mat_walk_t *s = &stack[top++];
+            s->node = nd->children[k];
+            s->box.min.x = (k & 1) ? mid[0] : e.box.min.x;
+            s->box.max.x = (k & 1) ? e.box.max.x : mid[0];
+            s->box.min.y = (k & 2) ? mid[1] : e.box.min.y;
+            s->box.max.y = (k & 2) ? e.box.max.y : mid[1];
+            s->box.min.z = (k & 4) ? mid[2] : e.box.min.z;
+            s->box.max.z = (k & 4) ? e.box.max.z : mid[2];
+        }
+    }
+    return found;
+}
 
 bool lm_gpu_chunk_svo_materials(npc_svo_grid_t *svo, const lm_mesh_t *meshes,
                                 uint32_t n_meshes)
@@ -28,90 +80,61 @@ bool lm_gpu_chunk_svo_materials(npc_svo_grid_t *svo, const lm_mesh_t *meshes,
     if (svo == NULL || svo->nodes == NULL || svo->node_count == 0 ||
         (meshes == NULL && n_meshes > 0))
         return false;
-    uint32_t cells_axis = 1u << svo->max_depth;
-    size_t n_cells = (size_t)cells_axis * cells_axis * cells_axis;
-    if (n_cells > LM_CHUNK_MAT_MAX_CELLS)
-        return false;
 
-    int dims[3] = { (int)cells_axis, (int)cells_axis, (int)cells_axis };
-    lm_gpu_vox_grid_t g;
-    if (!lm_gpu_voxelize_run(meshes, n_meshes, &svo->world_bounds, dims, &g))
-        return false;
-
-    /* Node-indexed accumulators (a leaf can span several grid cells when it is
-     * coarser than max depth; fold its cells area-weighted). */
-    uint32_t nc = svo->node_count;
-    float *acc = calloc((size_t)nc * 8u, sizeof(float));
-    if (acc == NULL) {
-        lm_gpu_vox_grid_free(&g);
-        return false;
-    }
-    for (int z = 0; z < dims[2]; ++z)
-        for (int y = 0; y < dims[1]; ++y)
-            for (int x = 0; x < dims[0]; ++x) {
-                size_t ci = ((size_t)z * (size_t)dims[1] + (size_t)y) *
-                            (size_t)dims[0] + (size_t)x;
-                if (g.area[ci] <= 0.0f && g.emissive[ci * 3] <= 0.0f &&
-                    g.emissive[ci * 3 + 1] <= 0.0f &&
-                    g.emissive[ci * 3 + 2] <= 0.0f)
-                    continue;
-                phys_vec3_t p = {
-                    g.origin[0] + ((float)x + 0.5f) * g.cell[0],
-                    g.origin[1] + ((float)y + 0.5f) * g.cell[1],
-                    g.origin[2] + ((float)z + 0.5f) * g.cell[2]
-                };
-                uint32_t node = NPC_SVO_INVALID_NODE;
-                uint8_t flags = npc_svo_query_point(svo, p, &node);
-                if (!(flags & NPC_SVO_FLAG_SOLID) || node >= nc)
-                    continue;
-                float *a = &acc[(size_t)node * 8u];
-                float w = g.area[ci];
-                a[0] += g.albedo[ci * 3 + 0] * w;
-                a[1] += g.albedo[ci * 3 + 1] * w;
-                a[2] += g.albedo[ci * 3 + 2] * w;
-                a[3] += w;
-                a[4] += g.emissive[ci * 3 + 0];
-                a[5] += g.emissive[ci * 3 + 1];
-                a[6] += g.emissive[ci * 3 + 2];
-                a[7] += 1.0f;
-            }
-    lm_gpu_vox_grid_free(&g);
-
-    /* Write the nodes: area-mean diffuse, per-cross-section emissive (cell
-     * average when a coarse leaf spans several cells), CPU-matching stats. */
-    uint32_t solid_leaves = 0, solid_no_mat = 0;
-    for (uint32_t i = 0; i < nc; ++i) {
+    uint32_t n_leaves = walk_leaves(svo, NULL, NULL);
+    for (uint32_t i = 0; i < svo->node_count; ++i) {
         npc_svo_node_t *nd = &svo->nodes[i];
-        const float *a = &acc[(size_t)i * 8u];
-        bool leaf = nd->occupancy == 0 && (nd->flags & NPC_SVO_FLAG_SOLID);
-        if (a[3] > 0.0f) {
-            float inv = 1.0f / a[3];
-            nd->diffuse[0] = a[0] * inv;
-            nd->diffuse[1] = a[1] * inv;
-            nd->diffuse[2] = a[2] * inv;
-        } else {
-            nd->diffuse[0] = nd->diffuse[1] = nd->diffuse[2] = 0.0f;
-        }
-        float cinv = a[7] > 0.0f ? 1.0f / a[7] : 0.0f;
-        nd->emissive[0] = a[4] * cinv;
-        nd->emissive[1] = a[5] * cinv;
-        nd->emissive[2] = a[6] * cinv;
-        if (leaf) {
-            ++solid_leaves;
-            if (a[3] <= 0.0f) {
-                ++solid_no_mat;
-                /* Same neutral fallback as the CPU pass: a black solid leaf
-                 * is a light SINK for every gather ray that hits it. */
-                nd->diffuse[0] = nd->diffuse[1] = nd->diffuse[2] = 0.5f;
-            }
-        }
+        nd->diffuse[0] = nd->diffuse[1] = nd->diffuse[2] = 0.0f;
+        nd->emissive[0] = nd->emissive[1] = nd->emissive[2] = 0.0f;
     }
-    free(acc);
+    if (n_leaves == 0) {
+        fprintf(stderr, "voxelize(gpu): 0 solid leaves, 0 with NO material "
+                        "(0.0%% gap)\n");
+        lm_svo_mip_average_up(svo);
+        return true;
+    }
+
+    uint32_t *idx = malloc((size_t)n_leaves * sizeof(uint32_t));
+    float *ctr = malloc((size_t)n_leaves * 3u * sizeof(float));
+    float *area = malloc((size_t)n_leaves * sizeof(float));
+    float *alb = malloc((size_t)n_leaves * 3u * sizeof(float));
+    float *emi = malloc((size_t)n_leaves * 3u * sizeof(float));
+    if (!idx || !ctr || !area || !alb || !emi) {
+        free(idx); free(ctr); free(area); free(alb); free(emi);
+        return false;
+    }
+    walk_leaves(svo, idx, ctr);
+
+    uint32_t cells_axis = 1u << svo->max_depth;
+    int dims[3] = { (int)cells_axis, (int)cells_axis, (int)cells_axis };
+    if (!lm_gpu_voxelize_sample(meshes, n_meshes, &svo->world_bounds, dims,
+                                ctr, n_leaves, area, alb, emi)) {
+        free(idx); free(ctr); free(area); free(alb); free(emi);
+        return false;
+    }
+
+    uint32_t solid_no_mat = 0;
+    for (uint32_t i = 0; i < n_leaves; ++i) {
+        npc_svo_node_t *nd = &svo->nodes[idx[i]];
+        if (area[i] > 0.0f) {
+            nd->diffuse[0] = alb[i * 3 + 0];
+            nd->diffuse[1] = alb[i * 3 + 1];
+            nd->diffuse[2] = alb[i * 3 + 2];
+        } else {
+            /* No surface sample in this leaf's cell: the CPU pass's neutral
+             * fallback (a black solid leaf is a light SINK for gather rays). */
+            nd->diffuse[0] = nd->diffuse[1] = nd->diffuse[2] = 0.5f;
+            ++solid_no_mat;
+        }
+        nd->emissive[0] = emi[i * 3 + 0];
+        nd->emissive[1] = emi[i * 3 + 1];
+        nd->emissive[2] = emi[i * 3 + 2];
+    }
+    free(idx); free(ctr); free(area); free(alb); free(emi);
     fprintf(stderr,
             "voxelize(gpu): %u solid leaves, %u with NO material (%.1f%% gap)\n",
-            solid_leaves, solid_no_mat,
-            solid_leaves ? 100.0f * (float)solid_no_mat / (float)solid_leaves
-                         : 0.0f);
+            n_leaves, solid_no_mat,
+            n_leaves ? 100.0f * (float)solid_no_mat / (float)n_leaves : 0.0f);
     lm_svo_mip_average_up(svo);
     return true;
 }

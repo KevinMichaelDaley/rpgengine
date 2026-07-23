@@ -2,12 +2,17 @@
  * @file lm_gpu_voxelize.c
  * @brief Bake-side GPU voxel rasterizer (see lm_gpu_voxelize.h, rpg-bpiz).
  *
- * The mechanism is the runtime dynamic-object volume rasterizer's
- * (gi_voxelize_draw.c): attachment-less FBO, the destination volume bound as a
- * LAYERED image (one sliced render target), fragment-shader image writes at the
- * voxel of the fragment's world position. Bake outputs need accumulation, so
- * the volume is one r32ui texture whose z extent carries LM_VOX_PLANES
- * fixed-point channel slabs written with imageAtomic*.
+ * SLICED RENDER TARGETS: the channel volumes' layers are attached as MRT
+ * color targets one slice at a time and the ENTIRE mesh set is drawn per
+ * slice with hardware clip planes bounding the slab (lm_gpu_voxraster.c), so
+ * every slice receives exactly the geometry crossing it from the hardware
+ * clipper -- nothing is collapsed onto a single projection box face, and
+ * accumulation is plain float ROP blending (no atomics, no shader-side
+ * rasterization). Three axis passes union occupancy/transmission (a surface
+ * edge-on to one slicing axis is face-on to another) while the material
+ * channels take only each fragment's dominant projection, so every surface
+ * point contributes exactly once. Dense requests run in z-slab windows to
+ * bound GPU memory at full resolution.
  */
 #include "ferrum/lightmap/gpu/lm_gpu_voxelize.h"
 
@@ -16,250 +21,100 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* ── GL constants + types (no glad; headless lib) ── */
-typedef unsigned int  GLenum, GLuint, GLbitfield;
-typedef int           GLint, GLsizei;
-typedef unsigned char GLboolean;
-typedef char          GLchar;
-typedef float         GLfloat;
-typedef intptr_t      GLintptr;
-typedef ptrdiff_t     GLsizeiptr;
+#include "lm_gpu_voxelize_internal.h"
 
-#define GLV_VERTEX_SHADER        0x8B31
-#define GLV_FRAGMENT_SHADER      0x8B30
-#define GLV_COMPUTE_SHADER       0x91B9
-#define GLV_COMPILE_STATUS       0x8B81
-#define GLV_LINK_STATUS          0x8B82
-#define GLV_ARRAY_BUFFER         0x8892
-#define GLV_ELEMENT_ARRAY_BUFFER 0x8893
-#define GLV_STATIC_DRAW          0x88E4
-#define GLV_TRIANGLES            0x0004
-#define GLV_UNSIGNED_INT         0x1405
-#define GLV_UNSIGNED_BYTE        0x1401
-#define GLV_FLOAT                0x1406
-#define GLV_TEXTURE_2D           0x0DE1
-#define GLV_TEXTURE_3D           0x806F
-#define GLV_TEXTURE0             0x84C0
-#define GLV_TEXTURE_MIN_FILTER   0x2801
-#define GLV_TEXTURE_MAG_FILTER   0x2800
-#define GLV_TEXTURE_WRAP_S       0x2802
-#define GLV_TEXTURE_WRAP_T       0x2803
-#define GLV_TEXTURE_MAX_LEVEL    0x813D
-#define GLV_LINEAR               0x2601
-#define GLV_NEAREST              0x2600
-#define GLV_REPEAT               0x2901
-#define GLV_R32UI                0x8236
-#define GLV_RED_INTEGER          0x8D94
-#define GLV_RGB                  0x1907
-#define GLV_RGBA                 0x1908
-#define GLV_RGB8                 0x8051
-#define GLV_RGBA8                0x8058
-#define GLV_SRGB8                0x8C41
-#define GLV_SRGB8_ALPHA8         0x8C43
-#define GLV_UNPACK_ALIGNMENT     0x0CF5
-#define GLV_FRAMEBUFFER          0x8D40
-#define GLV_FRAMEBUFFER_DEFAULT_WIDTH  0x9310
-#define GLV_FRAMEBUFFER_DEFAULT_HEIGHT 0x9311
-#define GLV_DEPTH_TEST           0x0B71
-#define GLV_CULL_FACE            0x0B44
-#define GLV_VIEWPORT             0x0BA2
-#define GLV_READ_WRITE           0x88BA
-#define GLV_ALL_BARRIER_BITS     0xFFFFFFFFu
-
-/* Fixed-point channel planes stacked along z (see header). */
-#define LM_VOX_PLANES 12
-#define LM_VOX_FXA 32768.0f  /* area / albedo / normal scale */
-#define LM_VOX_FXE 16384.0f  /* emissive scale (HDR headroom) */
-#define LM_VOX_FXT 65535u    /* transmission scale (init = clear) */
-/* GPU volume budget: cells * LM_VOX_PLANES * 4 B; 512 MB -> ~10.6M cells. */
-#define LM_VOX_BUDGET_CELLS (10u * 1024u * 1024u)
-
-static struct {
-    GLuint (*CreateShader)(GLenum);
-    void   (*ShaderSource)(GLuint, GLsizei, const GLchar *const *, const GLint *);
-    void   (*CompileShader)(GLuint);
-    void   (*GetShaderiv)(GLuint, GLenum, GLint *);
-    void   (*GetShaderInfoLog)(GLuint, GLsizei, GLsizei *, GLchar *);
-    GLuint (*CreateProgram)(void);
-    void   (*AttachShader)(GLuint, GLuint);
-    void   (*LinkProgram)(GLuint);
-    void   (*GetProgramiv)(GLuint, GLenum, GLint *);
-    void   (*GetProgramInfoLog)(GLuint, GLsizei, GLsizei *, GLchar *);
-    void   (*DeleteShader)(GLuint);
-    void   (*DeleteProgram)(GLuint);
-    void   (*UseProgram)(GLuint);
-    GLint  (*GetUniformLocation)(GLuint, const GLchar *);
-    void   (*Uniform1i)(GLint, GLint);
-    void   (*Uniform1ui)(GLint, GLuint);
-    void   (*Uniform2f)(GLint, GLfloat, GLfloat);
-    void   (*Uniform3f)(GLint, GLfloat, GLfloat, GLfloat);
-    void   (*Uniform3i)(GLint, GLint, GLint, GLint);
-    void   (*GenBuffers)(GLsizei, GLuint *);
-    void   (*DeleteBuffers)(GLsizei, const GLuint *);
-    void   (*BindBuffer)(GLenum, GLuint);
-    void   (*BufferData)(GLenum, GLsizeiptr, const void *, GLenum);
-    void   (*GenVertexArrays)(GLsizei, GLuint *);
-    void   (*DeleteVertexArrays)(GLsizei, const GLuint *);
-    void   (*BindVertexArray)(GLuint);
-    void   (*EnableVertexAttribArray)(GLuint);
-    void   (*VertexAttribPointer)(GLuint, GLint, GLenum, GLboolean, GLsizei,
-                                  const void *);
-    void   (*DrawElements)(GLenum, GLsizei, GLenum, const void *);
-    void   (*GenTextures)(GLsizei, GLuint *);
-    void   (*DeleteTextures)(GLsizei, const GLuint *);
-    void   (*BindTexture)(GLenum, GLuint);
-    void   (*ActiveTexture)(GLenum);
-    void   (*TexImage2D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLint, GLenum,
-                         GLenum, const void *);
-    void   (*TexImage3D)(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint,
-                         GLenum, GLenum, const void *);
-    void   (*TexParameteri)(GLenum, GLenum, GLint);
-    void   (*GetTexImage)(GLenum, GLint, GLenum, GLenum, void *);
-    void   (*PixelStorei)(GLenum, GLint);
-    void   (*GenFramebuffers)(GLsizei, GLuint *);
-    void   (*DeleteFramebuffers)(GLsizei, const GLuint *);
-    void   (*BindFramebuffer)(GLenum, GLuint);
-    void   (*FramebufferParameteri)(GLenum, GLenum, GLint);
-    void   (*BindImageTexture)(GLuint, GLuint, GLint, GLboolean, GLint, GLenum,
-                               GLenum);
-    void   (*MemoryBarrier)(GLbitfield);
-    void   (*DispatchCompute)(GLuint, GLuint, GLuint);
-    void   (*Viewport)(GLint, GLint, GLsizei, GLsizei);
-    void   (*Enable)(GLenum);
-    void   (*Disable)(GLenum);
-    GLboolean (*IsEnabled)(GLenum);
-    void   (*DepthMask)(GLboolean);
-    void   (*GetIntegerv)(GLenum, GLint *);
-    void   (*Finish)(void);
-} gl;
-
-static GLuint g_prog, g_clear, g_fbo;
-static bool g_ready;
-
-/* Raster VS: the gi_voxelize flattening -- normalise the world position over
- * the box and project the two non-@p axis components onto the raster plane.
- * Meshes are already world-space, so there is no model matrix. */
+/* Slice raster VS: flatten the two non-axis components onto the raster plane
+ * (the gi_voxelize projection); the slice's slab is enforced by the HARDWARE
+ * clip planes. Meshes are world-space: no model matrix. */
 static const char *const VOX_VS =
     "#version 430 core\n"
     "layout(location=0) in vec3 in_pos;\n"
     "layout(location=1) in vec3 in_nrm;\n"
     "layout(location=2) in vec2 in_uv;\n"
     "uniform vec3 u_origin; uniform vec3 u_extent; uniform int u_axis;\n"
+    "uniform float u_clip0; uniform float u_clip1;\n"
     "out vec3 v_world; out vec3 v_nrm; out vec2 v_uv;\n"
+    "out float gl_ClipDistance[2];\n"
     "void main(){\n"
     "  v_world = in_pos; v_nrm = in_nrm; v_uv = in_uv;\n"
     "  vec3 n = (in_pos - u_origin) / max(u_extent, vec3(1e-6));\n"
     "  vec2 xy = (u_axis==0) ? n.yz : ((u_axis==1) ? n.xz : n.xy);\n"
+    "  float ac = (u_axis==0) ? in_pos.x : ((u_axis==1) ? in_pos.y : in_pos.z);\n"
+    "  gl_ClipDistance[0] = ac - u_clip0;\n"
+    "  gl_ClipDistance[1] = u_clip1 - ac;\n"
     "  gl_Position = vec4(xy * 2.0 - 1.0, 0.0, 1.0);\n"
     "}\n";
 
-/* Raster FS: voxel from the world position, channel planes along z.
- * Occupancy + transmission take EVERY covering fragment (union over the three
- * projections = hole-free); the accumulated channels take only fragments whose
- * geometric normal is dominant along the current raster axis, so each surface
- * point contributes exactly once with its best-sampled projection. */
+/* Slice raster FS: five MRT outputs, accumulated by ROP blending (ADD; MIN on
+ * transmission). Occupancy (albedo alpha) + transmission come from every
+ * projection; the weighted material channels only from the fragment's
+ * dominant projection so each surface point contributes exactly once. */
 static const char *const VOX_FS =
     "#version 430 core\n"
-    "layout(r32ui, binding=0) uniform coherent uimage3D u_vol;\n"
     "in vec3 v_world; in vec3 v_nrm; in vec2 v_uv;\n"
-    "uniform vec3 u_origin; uniform vec3 u_extent;\n"
-    "uniform ivec3 u_dims; uniform int u_zbase; uniform int u_zslab;\n"
-    "uniform int u_axis; uniform vec2 u_frag_sz;\n"
-    "uniform vec3 u_alb_tint; uniform vec3 u_emi_tint; uniform uint u_trans_fx;\n"
+    "layout(location=0) out float o_area;\n"
+    "layout(location=1) out vec4  o_alb;\n"
+    "layout(location=2) out vec4  o_emi;\n"
+    "layout(location=3) out vec4  o_nrm;\n"
+    "layout(location=4) out float o_trans;\n"
+    "uniform int u_axis; uniform vec2 u_cell_uv;\n"
+    "uniform vec3 u_alb_tint; uniform vec3 u_emi_tint; uniform float u_trans;\n"
     "uniform int u_has_alb; uniform int u_has_emi;\n"
     "uniform sampler2D u_alb_map; uniform sampler2D u_emi_map;\n"
     "void main(){\n"
-    "  vec3 n = (v_world - u_origin) / max(u_extent, vec3(1e-6));\n"
-    "  ivec3 vi = ivec3(floor(n * vec3(u_dims)));\n"
-    "  if (any(lessThan(vi, ivec3(0))) || any(greaterThanEqual(vi, u_dims)))\n"
-    "    return;\n"
-    "  if (vi.z < u_zbase || vi.z >= u_zbase + u_zslab) return;\n"
-    "  ivec3 c = ivec3(vi.x, vi.y, vi.z - u_zbase);\n"
-    "  imageAtomicOr (u_vol, c + ivec3(0,0, 0*u_zslab), 1u);\n"
-    "  imageAtomicMin(u_vol, c + ivec3(0,0,11*u_zslab), u_trans_fx);\n"
-    "  vec3 gn = cross(dFdx(v_world), dFdy(v_world));\n"
+    "  vec3 dwx = dFdx(v_world), dwy = dFdy(v_world);\n"
+    "  vec3 gn = cross(dwx, dwy);\n"
     "  vec3 an = abs(gn);\n"
     "  int dom = (an.x >= an.y && an.x >= an.z) ? 0 : ((an.y >= an.z) ? 1 : 2);\n"
-    "  if (dom != u_axis) return;\n"
+    "  o_trans = u_trans;\n"
+    "  if (dom != u_axis) {\n"
+    "    o_area = 0.0; o_alb = vec4(0.0, 0.0, 0.0, 1.0);\n"
+    "    o_emi = vec4(0.0); o_nrm = vec4(0.0);\n"
+    "    return;\n"
+    "  }\n"
     "  float gl2 = max(length(gn), 1e-12);\n"
     "  float cosw = max(an[u_axis] / gl2, 0.25);\n"
-    "  float w = (u_frag_sz.x * u_frag_sz.y) / cosw;\n"
+    "  float w = (u_cell_uv.x * u_cell_uv.y) / cosw;\n"
     "  vec3 nrm = (dot(v_nrm, v_nrm) > 1e-8) ? normalize(v_nrm) : (gn / gl2);\n"
     "  vec3 alb = u_alb_tint * ((u_has_alb != 0)\n"
     "           ? texture(u_alb_map, v_uv).rgb : vec3(1.0));\n"
     "  vec3 emi = u_emi_tint * ((u_has_emi != 0)\n"
     "           ? texture(u_emi_map, v_uv).rgb : vec3(1.0));\n"
-    "  imageAtomicAdd(u_vol, c + ivec3(0,0, 1*u_zslab), uint(w * 32768.0 + 0.5));\n"
-    "  imageAtomicAdd(u_vol, c + ivec3(0,0, 2*u_zslab), uint(alb.r * w * 32768.0 + 0.5));\n"
-    "  imageAtomicAdd(u_vol, c + ivec3(0,0, 3*u_zslab), uint(alb.g * w * 32768.0 + 0.5));\n"
-    "  imageAtomicAdd(u_vol, c + ivec3(0,0, 4*u_zslab), uint(alb.b * w * 32768.0 + 0.5));\n"
-    "  imageAtomicAdd(u_vol, c + ivec3(0,0, 5*u_zslab), uint(emi.r * w * 16384.0 + 0.5));\n"
-    "  imageAtomicAdd(u_vol, c + ivec3(0,0, 6*u_zslab), uint(emi.g * w * 16384.0 + 0.5));\n"
-    "  imageAtomicAdd(u_vol, c + ivec3(0,0, 7*u_zslab), uint(emi.b * w * 16384.0 + 0.5));\n"
-    "  vec3 nb = (nrm * 0.5 + 0.5) * w * 32768.0;\n"
-    "  imageAtomicAdd(u_vol, c + ivec3(0,0, 8*u_zslab), uint(nb.x + 0.5));\n"
-    "  imageAtomicAdd(u_vol, c + ivec3(0,0, 9*u_zslab), uint(nb.y + 0.5));\n"
-    "  imageAtomicAdd(u_vol, c + ivec3(0,0,10*u_zslab), uint(nb.z + 0.5));\n"
-    "}\n";
-
-/* Compute clear: zero every plane, transmission plane to FXT (= clear). */
-static const char *const VOX_CLEAR_CS =
-    "#version 430 core\n"
-    "layout(local_size_x=4, local_size_y=4, local_size_z=4) in;\n"
-    "layout(r32ui, binding=0) uniform writeonly uimage3D u_vol;\n"
-    "uniform ivec3 u_wdims; uniform int u_zslab;\n"
-    "void main(){\n"
-    "  ivec3 p = ivec3(gl_GlobalInvocationID);\n"
-    "  if (any(greaterThanEqual(p, u_wdims))) return;\n"
-    "  uint v = ((p.z / u_zslab) == 11) ? 65535u : 0u;\n"
-    "  imageStore(u_vol, p, uvec4(v, 0u, 0u, 0u));\n"
+    "  o_area = w;\n"
+    "  o_alb = vec4(alb * w, 1.0);\n"
+    "  o_emi = vec4(emi * w, 0.0);\n"
+    "  o_nrm = vec4(nrm * w, 0.0);\n"
     "}\n";
 
 static GLuint vox_compile(GLenum type, const char *src)
 {
-    GLuint s = gl.CreateShader(type);
-    gl.ShaderSource(s, 1, &src, NULL);
-    gl.CompileShader(s);
+    lm_voxi_gl_t *gl = &lm_voxi_gl;
+    GLuint s = gl->CreateShader(type);
+    gl->ShaderSource(s, 1, &src, NULL);
+    gl->CompileShader(s);
     GLint ok = 0;
-    gl.GetShaderiv(s, GLV_COMPILE_STATUS, &ok);
+    gl->GetShaderiv(s, GLV_COMPILE_STATUS, &ok);
     if (!ok) {
         char log[1024];
-        gl.GetShaderInfoLog(s, (GLsizei)sizeof log, NULL, log);
+        gl->GetShaderInfoLog(s, (GLsizei)sizeof log, NULL, log);
         fprintf(stderr, "lm_gpu_voxelize: shader compile failed: %s\n", log);
-        gl.DeleteShader(s);
+        gl->DeleteShader(s);
         return 0u;
     }
     return s;
 }
 
-static GLuint vox_link(GLuint a, GLuint b)
-{
-    GLuint p = gl.CreateProgram();
-    gl.AttachShader(p, a);
-    if (b) gl.AttachShader(p, b);
-    gl.LinkProgram(p);
-    GLint ok = 0;
-    gl.GetProgramiv(p, GLV_LINK_STATUS, &ok);
-    if (!ok) {
-        char log[1024];
-        gl.GetProgramInfoLog(p, (GLsizei)sizeof log, NULL, log);
-        fprintf(stderr, "lm_gpu_voxelize: link failed: %s\n", log);
-        gl.DeleteProgram(p);
-        return 0u;
-    }
-    return p;
-}
-
 bool lm_gpu_voxelize_init(const gl_loader_t *loader)
 {
     if (loader == NULL || loader->get_proc_address == NULL) return false;
-    if (g_ready) return true;
-    memset(&gl, 0, sizeof gl);
+    if (lm_voxi_ready) return true;
+    lm_voxi_gl_t *gl = &lm_voxi_gl;
+    memset(gl, 0, sizeof *gl);
 #define VX_LOAD(field, name) do {                                              \
     void *p_ = loader->get_proc_address((name), loader->user_data);            \
     if (p_ == NULL) { fprintf(stderr, "lm_gpu_voxelize: missing %s\n", name);  \
                       return false; }                                          \
-    memcpy(&gl.field, &p_, sizeof p_); } while (0)
+    memcpy(&gl->field, &p_, sizeof p_); } while (0)
     VX_LOAD(CreateShader, "glCreateShader");
     VX_LOAD(ShaderSource, "glShaderSource");
     VX_LOAD(CompileShader, "glCompileShader");
@@ -275,7 +130,7 @@ bool lm_gpu_voxelize_init(const gl_loader_t *loader)
     VX_LOAD(UseProgram, "glUseProgram");
     VX_LOAD(GetUniformLocation, "glGetUniformLocation");
     VX_LOAD(Uniform1i, "glUniform1i");
-    VX_LOAD(Uniform1ui, "glUniform1ui");
+    VX_LOAD(Uniform1f, "glUniform1f");
     VX_LOAD(Uniform2f, "glUniform2f");
     VX_LOAD(Uniform3f, "glUniform3f");
     VX_LOAD(Uniform3i, "glUniform3i");
@@ -283,6 +138,8 @@ bool lm_gpu_voxelize_init(const gl_loader_t *loader)
     VX_LOAD(DeleteBuffers, "glDeleteBuffers");
     VX_LOAD(BindBuffer, "glBindBuffer");
     VX_LOAD(BufferData, "glBufferData");
+    VX_LOAD(BindBufferBase, "glBindBufferBase");
+    VX_LOAD(GetBufferSubData, "glGetBufferSubData");
     VX_LOAD(GenVertexArrays, "glGenVertexArrays");
     VX_LOAD(DeleteVertexArrays, "glDeleteVertexArrays");
     VX_LOAD(BindVertexArray, "glBindVertexArray");
@@ -301,8 +158,12 @@ bool lm_gpu_voxelize_init(const gl_loader_t *loader)
     VX_LOAD(GenFramebuffers, "glGenFramebuffers");
     VX_LOAD(DeleteFramebuffers, "glDeleteFramebuffers");
     VX_LOAD(BindFramebuffer, "glBindFramebuffer");
-    VX_LOAD(FramebufferParameteri, "glFramebufferParameteri");
-    VX_LOAD(BindImageTexture, "glBindImageTexture");
+    VX_LOAD(CheckFramebufferStatus, "glCheckFramebufferStatus");
+    VX_LOAD(FramebufferTextureLayer, "glFramebufferTextureLayer");
+    VX_LOAD(DrawBuffers, "glDrawBuffers");
+    VX_LOAD(ClearBufferfv, "glClearBufferfv");
+    VX_LOAD(BlendEquationi, "glBlendEquationi");
+    VX_LOAD(BlendFunc, "glBlendFunc");
     VX_LOAD(MemoryBarrier, "glMemoryBarrier");
     VX_LOAD(DispatchCompute, "glDispatchCompute");
     VX_LOAD(Viewport, "glViewport");
@@ -317,177 +178,80 @@ bool lm_gpu_voxelize_init(const gl_loader_t *loader)
     GLuint vs = vox_compile(GLV_VERTEX_SHADER, VOX_VS);
     GLuint fs = vs ? vox_compile(GLV_FRAGMENT_SHADER, VOX_FS) : 0u;
     if (!vs || !fs) {
-        if (vs) gl.DeleteShader(vs);
+        if (vs) gl->DeleteShader(vs);
         return false;
     }
-    g_prog = vox_link(vs, fs);
-    gl.DeleteShader(vs);
-    gl.DeleteShader(fs);
-    GLuint cs = g_prog ? vox_compile(GLV_COMPUTE_SHADER, VOX_CLEAR_CS) : 0u;
-    if (cs) {
-        g_clear = vox_link(cs, 0u);
-        gl.DeleteShader(cs);
-    }
-    if (!g_prog || !g_clear) {
-        lm_gpu_voxelize_shutdown();
+    lm_voxi_prog = gl->CreateProgram();
+    gl->AttachShader(lm_voxi_prog, vs);
+    gl->AttachShader(lm_voxi_prog, fs);
+    gl->LinkProgram(lm_voxi_prog);
+    gl->DeleteShader(vs);
+    gl->DeleteShader(fs);
+    GLint ok = 0;
+    gl->GetProgramiv(lm_voxi_prog, GLV_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[1024];
+        gl->GetProgramInfoLog(lm_voxi_prog, (GLsizei)sizeof log, NULL, log);
+        fprintf(stderr, "lm_gpu_voxelize: link failed: %s\n", log);
+        gl->DeleteProgram(lm_voxi_prog);
+        lm_voxi_prog = 0u;
         return false;
     }
-    gl.GenFramebuffers(1, &g_fbo);
-    g_ready = true;
+    gl->GenFramebuffers(1, &lm_voxi_fbo);
+    lm_voxi_ready = true;
     return true;
 }
 
 void lm_gpu_voxelize_shutdown(void)
 {
-    if (gl.DeleteProgram != NULL) {
-        if (g_prog)  gl.DeleteProgram(g_prog);
-        if (g_clear) gl.DeleteProgram(g_clear);
-        if (g_fbo && gl.DeleteFramebuffers) gl.DeleteFramebuffers(1, &g_fbo);
+    lm_voxi_gl_t *gl = &lm_voxi_gl;
+    if (gl->DeleteProgram != NULL) {
+        if (lm_voxi_prog)   gl->DeleteProgram(lm_voxi_prog);
+        if (lm_voxi_sample) gl->DeleteProgram(lm_voxi_sample);
+        if (lm_voxi_fbo && gl->DeleteFramebuffers)
+            gl->DeleteFramebuffers(1, &lm_voxi_fbo);
     }
-    g_prog = g_clear = g_fbo = 0u;
-    g_ready = false;
+    lm_voxi_prog = lm_voxi_sample = lm_voxi_fbo = 0u;
+    lm_voxi_ready = false;
 }
 
-/* Mesh world AABB overlaps the raster box? */
-static bool vox_mesh_overlaps(const lm_mesh_t *m, const phys_aabb_t *box)
+/* Composite one axis pass of one window into the accumulating grid arrays.
+ * World cell (x,y,z) -> texel (u,v,layer): the two non-axis dims ascending. */
+static void vox_composite(lm_gpu_vox_grid_t *g, float *cover, int zbase,
+                          int zs, const lm_voxi_vols_t *vols,
+                          const float *rb_area, const float *rb_alb,
+                          const float *rb_emi, const float *rb_nrm,
+                          const float *rb_trans)
 {
-    if (m->vert_count == 0 || m->positions == NULL) return false;
-    float mn[3] = { m->positions[0], m->positions[1], m->positions[2] };
-    float mx[3] = { mn[0], mn[1], mn[2] };
-    for (uint32_t v = 1; v < m->vert_count; ++v)
-        for (int c = 0; c < 3; ++c) {
-            float p = m->positions[v * 3 + c];
-            if (p < mn[c]) mn[c] = p;
-            if (p > mx[c]) mx[c] = p;
-        }
-    const float bmin[3] = { box->min.x, box->min.y, box->min.z };
-    const float bmax[3] = { box->max.x, box->max.y, box->max.z };
-    for (int c = 0; c < 3; ++c)
-        if (mx[c] < bmin[c] || mn[c] > bmax[c]) return false;
-    return true;
-}
-
-/* Upload one lm_image as a GL texture (sRGB decoded by the sampler). */
-static GLuint vox_upload_image(const lm_image_t *img)
-{
-    if (img == NULL || img->pixels == NULL || img->width == 0 ||
-        img->height == 0 || (img->channels != 3 && img->channels != 4))
-        return 0u;
-    GLuint t = 0u;
-    gl.GenTextures(1, &t);
-    gl.BindTexture(GLV_TEXTURE_2D, t);
-    gl.PixelStorei(GLV_UNPACK_ALIGNMENT, 1);
-    GLint ifmt = img->channels == 4
-               ? (img->srgb ? (GLint)GLV_SRGB8_ALPHA8 : (GLint)GLV_RGBA8)
-               : (img->srgb ? (GLint)GLV_SRGB8 : (GLint)GLV_RGB8);
-    GLenum fmt = img->channels == 4 ? GLV_RGBA : GLV_RGB;
-    gl.TexImage2D(GLV_TEXTURE_2D, 0, ifmt, (GLsizei)img->width,
-                  (GLsizei)img->height, 0, fmt, GLV_UNSIGNED_BYTE, img->pixels);
-    gl.TexParameteri(GLV_TEXTURE_2D, GLV_TEXTURE_MIN_FILTER, GLV_LINEAR);
-    gl.TexParameteri(GLV_TEXTURE_2D, GLV_TEXTURE_MAG_FILTER, GLV_LINEAR);
-    gl.TexParameteri(GLV_TEXTURE_2D, GLV_TEXTURE_WRAP_S, GLV_REPEAT);
-    gl.TexParameteri(GLV_TEXTURE_2D, GLV_TEXTURE_WRAP_T, GLV_REPEAT);
-    gl.TexParameteri(GLV_TEXTURE_2D, GLV_TEXTURE_MAX_LEVEL, 0);
-    return t;
-}
-
-/* Per-run GPU residency for one mesh: interleaved [pos nrm uv] VBO + EBO + VAO
- * + its two (deduped by the caller) material textures. */
-typedef struct vox_gpu_mesh {
-    GLuint vao, vbo, ebo, alb_tex, emi_tex;
-    const lm_mesh_t *src;
-} vox_gpu_mesh_t;
-
-static bool vox_upload_mesh(const lm_mesh_t *m, vox_gpu_mesh_t *out)
-{
-    memset(out, 0, sizeof *out);
-    out->src = m;
-    float *inter = malloc((size_t)m->vert_count * 8u * sizeof(float));
-    if (inter == NULL) return false;
-    for (uint32_t v = 0; v < m->vert_count; ++v) {
-        float *d = &inter[v * 8u];
-        d[0] = m->positions[v * 3 + 0];
-        d[1] = m->positions[v * 3 + 1];
-        d[2] = m->positions[v * 3 + 2];
-        d[3] = m->normals != NULL ? m->normals[v * 3 + 0] : 0.0f;
-        d[4] = m->normals != NULL ? m->normals[v * 3 + 1] : 0.0f;
-        d[5] = m->normals != NULL ? m->normals[v * 3 + 2] : 0.0f;
-        d[6] = m->uv0 != NULL ? m->uv0[v * 2 + 0] : 0.0f;
-        d[7] = m->uv0 != NULL ? m->uv0[v * 2 + 1] : 0.0f;
-    }
-    gl.GenVertexArrays(1, &out->vao);
-    gl.BindVertexArray(out->vao);
-    gl.GenBuffers(1, &out->vbo);
-    gl.BindBuffer(GLV_ARRAY_BUFFER, out->vbo);
-    gl.BufferData(GLV_ARRAY_BUFFER,
-                  (GLsizeiptr)((size_t)m->vert_count * 8u * sizeof(float)),
-                  inter, GLV_STATIC_DRAW);
-    free(inter);
-    gl.GenBuffers(1, &out->ebo);
-    gl.BindBuffer(GLV_ELEMENT_ARRAY_BUFFER, out->ebo);
-    gl.BufferData(GLV_ELEMENT_ARRAY_BUFFER,
-                  (GLsizeiptr)((size_t)m->index_count * sizeof(uint32_t)),
-                  m->indices, GLV_STATIC_DRAW);
-    const GLsizei stride = 8 * (GLsizei)sizeof(float);
-    gl.EnableVertexAttribArray(0);
-    gl.VertexAttribPointer(0, 3, GLV_FLOAT, 0, stride, (const void *)0);
-    gl.EnableVertexAttribArray(1);
-    gl.VertexAttribPointer(1, 3, GLV_FLOAT, 0, stride,
-                           (const void *)(3u * sizeof(float)));
-    gl.EnableVertexAttribArray(2);
-    gl.VertexAttribPointer(2, 2, GLV_FLOAT, 0, stride,
-                           (const void *)(6u * sizeof(float)));
-    gl.BindVertexArray(0u);
-    return true;
-}
-
-static void vox_free_mesh(vox_gpu_mesh_t *gm)
-{
-    if (gm->vao) gl.DeleteVertexArrays(1, &gm->vao);
-    if (gm->vbo) gl.DeleteBuffers(1, &gm->vbo);
-    if (gm->ebo) gl.DeleteBuffers(1, &gm->ebo);
-    memset(gm, 0, sizeof *gm);
-}
-
-/* Decode one slab of the readback volume into the output grid arrays. */
-static void vox_decode_slab(lm_gpu_vox_grid_t *g, const uint32_t *rb,
-                            int zbase, int zslab, float vox_area)
-{
-    const size_t plane = (size_t)g->dims[0] * (size_t)g->dims[1];
-    for (int z = 0; z < zslab; ++z)
-        for (size_t xy = 0; xy < plane; ++xy) {
-            size_t src = (size_t)z * plane + xy;
-            size_t dst = (size_t)(zbase + z) * plane + xy;
-            const size_t pl = (size_t)zslab * plane;
-            float a = (float)rb[src + 1u * pl] / LM_VOX_FXA;
-            g->occ[dst]  = rb[src] ? 1u : 0u;
-            g->area[dst] = a;
-            g->trans[dst] = (float)rb[src + 11u * pl] / (float)LM_VOX_FXT;
-            if (a > 0.0f) {
-                float inv = 1.0f / (a * LM_VOX_FXA);
+    const int ax = vols->axis;
+    for (int z = 0; z < zs; ++z)
+        for (int y = 0; y < g->dims[1]; ++y)
+            for (int x = 0; x < g->dims[0]; ++x) {
+                int c3[3] = { x, y, z };
+                int u = ax == 0 ? c3[1] : c3[0];
+                int v = ax == 2 ? c3[1] : c3[2];
+                int l = c3[ax];
+                size_t t = ((size_t)l * (size_t)vols->vdim + (size_t)v) *
+                           (size_t)vols->udim + (size_t)u;
+                size_t dst = ((size_t)(zbase + z) * (size_t)g->dims[1] +
+                              (size_t)y) * (size_t)g->dims[0] + (size_t)x;
+                g->area[dst] += rb_area[t];
+                cover[dst] += rb_alb[t * 4 + 3];
                 for (int k = 0; k < 3; ++k) {
-                    g->albedo[dst * 3 + k] =
-                        (float)rb[src + (size_t)(2 + k) * pl] * inv;
-                    float nb = (float)rb[src + (size_t)(8 + k) * pl] * inv;
-                    g->normal[dst * 3 + k] = nb * 2.0f - 1.0f;
+                    g->albedo[dst * 3 + k]   += rb_alb[t * 4 + k];
+                    g->emissive[dst * 3 + k] += rb_emi[t * 4 + k];
+                    g->normal[dst * 3 + k]   += rb_nrm[t * 4 + k];
                 }
-                float nl = sqrtf(g->normal[dst * 3] * g->normal[dst * 3] +
-                                 g->normal[dst * 3 + 1] * g->normal[dst * 3 + 1] +
-                                 g->normal[dst * 3 + 2] * g->normal[dst * 3 + 2]);
-                if (nl > 1e-6f)
-                    for (int k = 0; k < 3; ++k) g->normal[dst * 3 + k] /= nl;
+                if (rb_trans[t] < g->trans[dst]) g->trans[dst] = rb_trans[t];
             }
-            for (int k = 0; k < 3; ++k)
-                g->emissive[dst * 3 + k] =
-                    (float)rb[src + (size_t)(5 + k) * pl] / LM_VOX_FXE / vox_area;
-        }
 }
 
 bool lm_gpu_voxelize_run(const lm_mesh_t *meshes, uint32_t n_meshes,
                          const phys_aabb_t *box, const int dims[3],
                          lm_gpu_vox_grid_t *out)
 {
-    if (!g_ready || box == NULL || dims == NULL || out == NULL ||
+    lm_voxi_gl_t *gl = &lm_voxi_gl;
+    if (!lm_voxi_ready || box == NULL || dims == NULL || out == NULL ||
         (meshes == NULL && n_meshes > 0))
         return false;
     if (dims[0] < 1 || dims[1] < 1 || dims[2] < 1) return false;
@@ -510,29 +274,34 @@ bool lm_gpu_voxelize_run(const lm_mesh_t *meshes, uint32_t n_meshes,
     g.emissive = calloc(n * 3u, sizeof(float));
     g.normal   = calloc(n * 3u, sizeof(float));
     g.trans    = malloc(n * sizeof(float));
-    if (!g.occ || !g.area || !g.albedo || !g.emissive || !g.normal || !g.trans) {
+    float *cover = calloc(n, sizeof(float));
+    if (!g.occ || !g.area || !g.albedo || !g.emissive || !g.normal ||
+        !g.trans || !cover) {
+        free(cover);
         lm_gpu_vox_grid_free(&g);
         return false;
     }
     for (size_t i = 0; i < n; ++i) g.trans[i] = 1.0f;
 
     /* GPU-resident meshes (culled to the box) + material texture dedupe. */
-    vox_gpu_mesh_t *gm = calloc(n_meshes ? n_meshes : 1u, sizeof *gm);
+    lm_voxi_mesh_t *gm = calloc(n_meshes ? n_meshes : 1u, sizeof *gm);
     const lm_image_t **imgs = calloc((size_t)n_meshes * 2u + 1u, sizeof *imgs);
     GLuint *img_tex = calloc((size_t)n_meshes * 2u + 1u, sizeof *img_tex);
     if (gm == NULL || imgs == NULL || img_tex == NULL) {
-        free(gm); free((void *)imgs); free(img_tex);
+        free(gm); free((void *)imgs); free(img_tex); free(cover);
         lm_gpu_vox_grid_free(&g);
         return false;
     }
+    const float bmin[3] = { box->min.x, box->min.y, box->min.z };
+    const float bmax[3] = { box->max.x, box->max.y, box->max.z };
     uint32_t n_gm = 0, n_img = 0;
     bool ok = true;
     for (uint32_t i = 0; i < n_meshes && ok; ++i) {
         const lm_mesh_t *m = &meshes[i];
         if (m->index_count < 3 || m->positions == NULL || m->indices == NULL)
             continue;
-        if (!vox_mesh_overlaps(m, box)) continue;
-        ok = vox_upload_mesh(m, &gm[n_gm]);
+        if (!lm_voxi_mesh_overlaps(m, bmin, bmax)) continue;
+        ok = lm_voxi_upload_mesh(m, &gm[n_gm]);
         if (!ok) break;
         const lm_image_t *want[2] = { m->albedo_image, m->emissive_image };
         GLuint got[2] = { 0u, 0u };
@@ -541,7 +310,7 @@ bool lm_gpu_voxelize_run(const lm_mesh_t *meshes, uint32_t n_meshes,
             for (uint32_t j = 0; j < n_img; ++j)
                 if (imgs[j] == want[k]) { got[k] = img_tex[j]; break; }
             if (got[k] == 0u) {
-                got[k] = vox_upload_image(want[k]);
+                got[k] = lm_voxi_upload_image(want[k]);
                 if (got[k] != 0u) {
                     imgs[n_img] = want[k];
                     img_tex[n_img] = got[k];
@@ -556,130 +325,79 @@ bool lm_gpu_voxelize_run(const lm_mesh_t *meshes, uint32_t n_meshes,
 
     /* Saved state (the offline bake owns the context; restore what we touch). */
     GLint vp[4];
-    gl.GetIntegerv(GLV_VIEWPORT, vp);
-    GLboolean depth_on = gl.IsEnabled(GLV_DEPTH_TEST);
-    GLboolean cull_on = gl.IsEnabled(GLV_CULL_FACE);
+    gl->GetIntegerv(GLV_VIEWPORT, vp);
+    GLboolean depth_on = gl->IsEnabled(GLV_DEPTH_TEST);
+    GLboolean cull_on = gl->IsEnabled(GLV_CULL_FACE);
 
-    /* z-slab loop bounds GPU memory: cells * LM_VOX_PLANES stays under budget. */
+    /* z-slab windows bound GPU memory at full resolution. */
     int zslab = (int)(LM_VOX_BUDGET_CELLS /
                       (size_t)((size_t)dims[0] * (size_t)dims[1]));
     if (zslab < 1) zslab = 1;
     if (zslab > dims[2]) zslab = dims[2];
 
-    int vpd = dims[0];
-    if (dims[1] > vpd) vpd = dims[1];
-    if (dims[2] > vpd) vpd = dims[2];
-    vpd *= 2;                                     /* 2x supersampled coverage */
-    if (vpd < 64) vpd = 64;
-    if (vpd > 2048) vpd = 2048;
+    size_t max_cells = (size_t)dims[0] * (size_t)dims[1] * (size_t)zslab;
+    float *rb_area = malloc(max_cells * sizeof(float));
+    float *rb_alb  = malloc(max_cells * 4u * sizeof(float));
+    float *rb_emi  = malloc(max_cells * 4u * sizeof(float));
+    float *rb_nrm  = malloc(max_cells * 4u * sizeof(float));
+    float *rb_tr   = malloc(max_cells * sizeof(float));
+    if (!rb_area || !rb_alb || !rb_emi || !rb_nrm || !rb_tr) ok = false;
 
-    GLuint vol = 0u;
-    uint32_t *rb = NULL;
-    if (ok) {
-        gl.GenTextures(1, &vol);
-        gl.BindTexture(GLV_TEXTURE_3D, vol);
-        gl.TexParameteri(GLV_TEXTURE_3D, GLV_TEXTURE_MIN_FILTER, GLV_NEAREST);
-        gl.TexParameteri(GLV_TEXTURE_3D, GLV_TEXTURE_MAG_FILTER, GLV_NEAREST);
-        gl.TexParameteri(GLV_TEXTURE_3D, GLV_TEXTURE_MAX_LEVEL, 0);
-        rb = malloc((size_t)dims[0] * (size_t)dims[1] * (size_t)zslab *
-                    LM_VOX_PLANES * sizeof(uint32_t));
-        ok = rb != NULL;
-    }
-
-    const float vox_area = (g.cell[0] * g.cell[1] + g.cell[1] * g.cell[2] +
-                            g.cell[0] * g.cell[2]) / 3.0f;
     for (int zbase = 0; zbase < dims[2] && ok; zbase += zslab) {
         int zs = zslab;
         if (zbase + zs > dims[2]) zs = dims[2] - zbase;
-        gl.BindTexture(GLV_TEXTURE_3D, vol);
-        gl.TexImage3D(GLV_TEXTURE_3D, 0, (GLint)GLV_R32UI, dims[0], dims[1],
-                      zs * LM_VOX_PLANES, 0, GLV_RED_INTEGER, GLV_UNSIGNED_INT,
-                      NULL);
-        gl.BindImageTexture(0, vol, 0, /*layered=*/1, 0, GLV_READ_WRITE,
-                            GLV_R32UI);
-        /* clear */
-        gl.UseProgram(g_clear);
-        gl.Uniform3i(gl.GetUniformLocation(g_clear, "u_wdims"),
-                     dims[0], dims[1], zs * LM_VOX_PLANES);
-        gl.Uniform1i(gl.GetUniformLocation(g_clear, "u_zslab"), zs);
-        gl.DispatchCompute((GLuint)((dims[0] + 3) / 4),
-                           (GLuint)((dims[1] + 3) / 4),
-                           (GLuint)((zs * LM_VOX_PLANES + 3) / 4));
-        gl.MemoryBarrier(GLV_ALL_BARRIER_BITS);
-
-        /* raster: attachment-less FBO, one sliced render target (the volume). */
-        gl.BindFramebuffer(GLV_FRAMEBUFFER, g_fbo);
-        gl.FramebufferParameteri(GLV_FRAMEBUFFER,
-                                 GLV_FRAMEBUFFER_DEFAULT_WIDTH, vpd);
-        gl.FramebufferParameteri(GLV_FRAMEBUFFER,
-                                 GLV_FRAMEBUFFER_DEFAULT_HEIGHT, vpd);
-        gl.Viewport(0, 0, vpd, vpd);
-        gl.Disable(GLV_DEPTH_TEST);
-        gl.DepthMask(0);
-        gl.Disable(GLV_CULL_FACE);
-        gl.UseProgram(g_prog);
-        gl.Uniform3f(gl.GetUniformLocation(g_prog, "u_origin"),
-                     g.origin[0], g.origin[1], g.origin[2]);
-        gl.Uniform3f(gl.GetUniformLocation(g_prog, "u_extent"),
-                     ext[0], ext[1], ext[2]);
-        gl.Uniform3i(gl.GetUniformLocation(g_prog, "u_dims"),
-                     dims[0], dims[1], dims[2]);
-        gl.Uniform1i(gl.GetUniformLocation(g_prog, "u_zbase"), zbase);
-        gl.Uniform1i(gl.GetUniformLocation(g_prog, "u_zslab"), zs);
-        gl.Uniform1i(gl.GetUniformLocation(g_prog, "u_alb_map"), 0);
-        gl.Uniform1i(gl.GetUniformLocation(g_prog, "u_emi_map"), 1);
-        for (int axis = 0; axis < 3; ++axis) {
-            gl.Uniform1i(gl.GetUniformLocation(g_prog, "u_axis"), axis);
-            float fu = (axis == 0 ? ext[1] : ext[0]) / (float)vpd;
-            float fv = (axis == 2 ? ext[1] : ext[2]) / (float)vpd;
-            gl.Uniform2f(gl.GetUniformLocation(g_prog, "u_frag_sz"), fu, fv);
-            for (uint32_t i = 0; i < n_gm; ++i) {
-                const lm_mesh_t *m = gm[i].src;
-                gl.Uniform3f(gl.GetUniformLocation(g_prog, "u_alb_tint"),
-                             m->albedo.x, m->albedo.y, m->albedo.z);
-                gl.Uniform3f(gl.GetUniformLocation(g_prog, "u_emi_tint"),
-                             m->emissive.x, m->emissive.y, m->emissive.z);
-                float tr = 1.0f - m->opacity;
-                if (tr < 0.0f) tr = 0.0f;
-                if (tr > 1.0f) tr = 1.0f;
-                gl.Uniform1ui(gl.GetUniformLocation(g_prog, "u_trans_fx"),
-                              (GLuint)(tr * (float)LM_VOX_FXT));
-                gl.Uniform1i(gl.GetUniformLocation(g_prog, "u_has_alb"),
-                             gm[i].alb_tex != 0u);
-                gl.Uniform1i(gl.GetUniformLocation(g_prog, "u_has_emi"),
-                             gm[i].emi_tex != 0u);
-                gl.ActiveTexture(GLV_TEXTURE0 + 0);
-                gl.BindTexture(GLV_TEXTURE_2D, gm[i].alb_tex);
-                gl.ActiveTexture(GLV_TEXTURE0 + 1);
-                gl.BindTexture(GLV_TEXTURE_2D, gm[i].emi_tex);
-                gl.ActiveTexture(GLV_TEXTURE0);
-                gl.BindVertexArray(gm[i].vao);
-                gl.DrawElements(GLV_TRIANGLES, (GLsizei)m->index_count,
-                                GLV_UNSIGNED_INT, NULL);
-            }
+        float worg[3] = { g.origin[0], g.origin[1],
+                          g.origin[2] + (float)zbase * g.cell[2] };
+        float wext[3] = { ext[0], ext[1], (float)zs * g.cell[2] };
+        int wdims[3] = { dims[0], dims[1], zs };
+        for (int axis = 0; axis < 3 && ok; ++axis) {
+            lm_voxi_vols_t vols;
+            if (!lm_voxi_vols_create(&vols, wdims, axis)) { ok = false; break; }
+            lm_voxi_raster_window(gm, n_gm, worg, wext, wdims, &vols);
+            lm_voxi_vols_read(&vols, LM_VOX_CH_AREA, 1, rb_area);
+            lm_voxi_vols_read(&vols, LM_VOX_CH_ALB, 4, rb_alb);
+            lm_voxi_vols_read(&vols, LM_VOX_CH_EMI, 4, rb_emi);
+            lm_voxi_vols_read(&vols, LM_VOX_CH_NRM, 4, rb_nrm);
+            lm_voxi_vols_read(&vols, LM_VOX_CH_TRANS, 1, rb_tr);
+            lm_voxi_vols_free(&vols);
+            vox_composite(&g, cover, zbase, zs, &vols, rb_area, rb_alb,
+                          rb_emi, rb_nrm, rb_tr);
         }
-        gl.BindVertexArray(0u);
-        gl.MemoryBarrier(GLV_ALL_BARRIER_BITS);
-
-        gl.BindTexture(GLV_TEXTURE_3D, vol);
-        gl.GetTexImage(GLV_TEXTURE_3D, 0, GLV_RED_INTEGER, GLV_UNSIGNED_INT, rb);
-        vox_decode_slab(&g, rb, zbase, zs, vox_area);
     }
-    gl.Finish();
+    gl->Finish();
+
+    /* Finalize: occupancy from coverage; area-mean albedo; renormalised
+     * normal; emissive over the voxel cross-section. */
+    const float vox_area = (g.cell[0] * g.cell[1] + g.cell[1] * g.cell[2] +
+                            g.cell[0] * g.cell[2]) / 3.0f;
+    const float inv_va = vox_area > 0.0f ? 1.0f / vox_area : 0.0f;
+    for (size_t i = 0; i < n && ok; ++i) {
+        g.occ[i] = cover[i] > 0.5f ? 1u : 0u;
+        if (g.area[i] > 0.0f) {
+            float inv = 1.0f / g.area[i];
+            for (int k = 0; k < 3; ++k) g.albedo[i * 3 + k] *= inv;
+            float *nn = &g.normal[i * 3];
+            float nl = sqrtf(nn[0]*nn[0] + nn[1]*nn[1] + nn[2]*nn[2]);
+            if (nl > 1e-8f) { nn[0] /= nl; nn[1] /= nl; nn[2] /= nl; }
+        } else {
+            g.normal[i * 3] = g.normal[i * 3 + 1] = g.normal[i * 3 + 2] = 0.0f;
+        }
+        for (int k = 0; k < 3; ++k) g.emissive[i * 3 + k] *= inv_va;
+    }
 
     /* teardown + state restore */
-    free(rb);
-    if (vol) gl.DeleteTextures(1, &vol);
-    for (uint32_t i = 0; i < n_gm; ++i) vox_free_mesh(&gm[i]);
+    free(rb_area); free(rb_alb); free(rb_emi); free(rb_nrm); free(rb_tr);
+    free(cover);
+    for (uint32_t i = 0; i < n_gm; ++i) lm_voxi_free_mesh(&gm[i]);
     for (uint32_t j = 0; j < n_img; ++j)
-        if (img_tex[j]) gl.DeleteTextures(1, &img_tex[j]);
+        if (img_tex[j]) gl->DeleteTextures(1, &img_tex[j]);
     free(gm); free((void *)imgs); free(img_tex);
-    gl.UseProgram(0u);
-    gl.BindFramebuffer(GLV_FRAMEBUFFER, 0u);
-    gl.Viewport(vp[0], vp[1], vp[2], vp[3]);
-    gl.DepthMask(1);
-    if (depth_on) gl.Enable(GLV_DEPTH_TEST);
-    if (cull_on) gl.Enable(GLV_CULL_FACE);
+    gl->UseProgram(0u);
+    gl->BindFramebuffer(GLV_FRAMEBUFFER, 0u);
+    gl->Viewport(vp[0], vp[1], vp[2], vp[3]);
+    gl->DepthMask(1);
+    if (depth_on) gl->Enable(GLV_DEPTH_TEST);
+    if (cull_on) gl->Enable(GLV_CULL_FACE);
 
     if (!ok) {
         lm_gpu_vox_grid_free(&g);

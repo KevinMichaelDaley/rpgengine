@@ -227,6 +227,54 @@ static void t_transmission(void)
     lm_gpu_vox_grid_free(&g);
 }
 
+static void t_sample_points(void)
+{
+    build_box(0.6f, 2.4f);
+    lm_mesh_t m = mesh_of(s_box_pos, s_box_nrm, s_box_uv, 24, s_box_idx, 36,
+                          0.8f, 0.2f, 0.1f, 1.0f);
+    phys_aabb_t box = { { -0.5f, -0.5f, -0.5f }, { 3.5f, 3.5f, 3.5f } };
+    int dims[3] = { 8, 8, 8 };
+    /* face centre / cube interior / empty space */
+    float pts[9] = { 0.6f, 1.5f, 1.5f,  1.5f, 1.5f, 1.5f,  3.4f, 3.4f, 3.4f };
+    float area[3], alb[9], emi[9];
+    CHECK(!lm_gpu_voxelize_sample(&m, 1, &box, dims, NULL, 3, area, alb, emi),
+          "NULL points accepted");
+    CHECK(!lm_gpu_voxelize_sample(&m, 1, &box, dims, pts, 0, area, alb, emi),
+          "0 points accepted");
+    CHECK(lm_gpu_voxelize_sample(&m, 1, &box, dims, pts, 3, area, alb, emi),
+          "sample run failed");
+    CHECK(area[0] > 0.0f, "face point has no area");
+    CHECK(fabsf(alb[0] - 0.8f) < 0.08f && fabsf(alb[1] - 0.2f) < 0.08f &&
+          fabsf(alb[2] - 0.1f) < 0.08f, "face point albedo != tint");
+    CHECK(area[1] <= 0.0f, "interior point has surface area");
+    CHECK(area[2] <= 0.0f, "empty-space point has surface area");
+    CHECK(emi[0] < 0.05f, "non-emissive face emits");
+}
+
+static void t_sample_tiled(void)
+{
+    /* dims 256 > LM_VOX_TILE forces a 2x2x2 tile grid at full resolution. */
+    build_quad(1.0f, 63.0f, 1.0f, 63.0f, 10.1f);
+    lm_mesh_t m = mesh_of(s_quad_pos, s_quad_nrm, s_quad_uv, 4, s_quad_idx, 6,
+                          0.3f, 0.9f, 0.2f, 1.0f);
+    phys_aabb_t box = { { 0, 0, 0 }, { 64, 64, 64 } };
+    int dims[3] = { 256, 256, 256 };                       /* 0.25 m cells */
+    float pts[9] = { 5.0f, 5.0f, 10.12f,     /* tile (0,0,0) on the quad */
+                     40.0f, 40.0f, 10.12f,   /* tile (1,1,0) on the quad */
+                     32.0f, 32.0f, 40.0f };  /* far off the quad */
+    float area[3], alb[9], emi[9];
+    CHECK(lm_gpu_voxelize_sample(&m, 1, &box, dims, pts, 3, area, alb, emi),
+          "tiled sample failed");
+    for (int i = 0; i < 2; ++i) {
+        CHECK(area[i] > 0.0f, "on-quad point has no area");
+        CHECK(fabsf(alb[i * 3 + 0] - 0.3f) < 0.1f &&
+              fabsf(alb[i * 3 + 1] - 0.9f) < 0.1f &&
+              fabsf(alb[i * 3 + 2] - 0.2f) < 0.1f,
+              "tiled point albedo != tint");
+    }
+    CHECK(area[2] <= 0.0f, "off-quad point has surface area");
+}
+
 int main(void)
 {
     /* Pre-init failure mode first: run() without init must fail cleanly. */
@@ -256,6 +304,8 @@ int main(void)
     t_textured_albedo();
     t_emissive_sum();
     t_transmission();
+    t_sample_points();
+    t_sample_tiled();
     lm_gpu_voxelize_shutdown();
     egl_headless_shutdown();
     printf("lm_gpu_voxelize_tests: %d checks, %d failures\n", g_checks, g_fails);
