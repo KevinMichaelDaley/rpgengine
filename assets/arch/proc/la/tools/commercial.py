@@ -723,12 +723,24 @@ def build_minimall(p, rng):
 
     dock_m, dock_w = [], []
     if docks_on:
-        for (b0, b1, _o0, _o1) in bays_m:
+        # a strip mall shares ONE dock (occasionally two) for the whole
+        # building -- not one per tenant.  Undocked bays keep only their
+        # rear man-door (dock=None).
+        n_bays_all = len(bays_m) + len(bays_w)
+        n_docks = min(n_bays_all, 2 if rng.random() < 0.35 else 1)
+        dock_picks = set(rng.sample(range(n_bays_all), n_docks))
+        for k9, (b0, b1, _o0, _o1) in enumerate(bays_m):
             man, dock = dock_layout(b0, b1)
-            dock_m.append((man, dock, rng.random() < 0.4))
-        for (b0, b1, _o0, _o1) in bays_w:
+            if k9 not in dock_picks:
+                dock = None
+            dock_m.append((man, dock,
+                           dock is not None and rng.random() < 0.4))
+        for k9, (b0, b1, _o0, _o1) in enumerate(bays_w):
             man, dock = dock_layout(b0, b1)
-            dock_w.append((man, dock, rng.random() < 0.4))
+            if (k9 + len(bays_m)) not in dock_picks:
+                dock = None
+            dock_w.append((man, dock,
+                           dock is not None and rng.random() < 0.4))
 
     def door_span(o0, o1, left):
         # FLUSH against the pier: any gap strip narrower than the frame
@@ -953,8 +965,9 @@ def build_minimall(p, rng):
         # end-bay clamp: o0-wt can COINCIDE with the side wall's inner
         # plane (verts on its edges); keep 50 mm clear.
         xl |= {max(o0r - wt, wt + 0.05), min(o1r + wt, Wm - wt - 0.05)}
-    for (_mn, (j0d, j1d), ins) in dock_m:
-        if ins:
+    for (_mn, dk9, ins) in dock_m:
+        if dk9 is not None and ins:
+            (j0d, j1d) = dk9
             xl |= {j0d - wt, j1d + wt}    # inset dock inner-skin strips
     for (b0, b1, o0, o1) in bays_m:
         xl |= {b0, b1, o0, o1}
@@ -1002,10 +1015,12 @@ def build_minimall(p, rng):
     if docks_on:
         srv_m = [mn for (mn, _dk, _ins) in dock_m]
         for (mn, dk, _ins) in dock_m:
-            xl |= set(mn) | set(dk)
+            xl |= set(mn) | (set(dk) if dk is not None else set())
         srv_w = [(mn[0] - Wy, mn[1] - Wy) for (mn, _dk, _ins) in dock_w]
         for (mn, dk, _ins) in dock_w:
-            yl |= {mn[0] - Wy, mn[1] - Wy, dk[0] - Wy, dk[1] - Wy}
+            yl |= {mn[0] - Wy, mn[1] - Wy}
+            if dk is not None:
+                yl |= {dk[0] - Wy, dk[1] - Wy}
     else:
         srv_m = [((b0 + b1) / 2.0 - 0.45, (b0 + b1) / 2.0 + 0.45)
                  for (b0, b1, _o0, _o1) in bays_m]
@@ -1239,7 +1254,10 @@ def build_minimall(p, rng):
                 if zc0 < Z_SRV - 1e-6:
                     return 'doorU'
         if docks_on:
-            for (_mn, (j0, j1), inset) in dock_m:
+            for (_mn, dk9, inset) in dock_m:
+                if dk9 is None:
+                    continue
+                (j0, j1) = dk9
                 in_row = Z_DSILL - 1e-6 <= zc0 < Z_DHEAD - 1e-6
                 if j0 - 1e-6 <= u0 < j1 - 1e-6 and in_row:
                     return 'void' if inset else 'window_dock'
@@ -1256,9 +1274,10 @@ def build_minimall(p, rng):
     # rear wall (outward +y, recess depth 0.6 INTO the building).
     if docks_on:
         dk_rows = [v for v in zl if Z_DSILL - 1e-6 <= v <= Z_DHEAD + 1e-6]
-        for (_mn, (j0, j1), inset) in dock_m:
-            if not inset:
+        for (_mn, dk9, inset) in dock_m:
+            if dk9 is None or not inset:
                 continue
+            (j0, j1) = dk9
             yb = D - 0.6              # recess back plane
             shell.tag = 'doors'
             # cheeks split at the inner-skin line in interior mode (the
@@ -1382,7 +1401,10 @@ def build_minimall(p, rng):
                     if zc0 < Z_SRV - 1e-6:
                         return 'doorU'
             if docks_on:
-                for (_mn, (j0, j1), inset) in dock_w:
+                for (_mn, dk9, inset) in dock_w:
+                    if dk9 is None:
+                        continue
+                    (j0, j1) = dk9
                     jy0, jy1 = j0 - Wy, j1 - Wy
                     in_row = Z_DSILL - 1e-6 <= zc0 < Z_DHEAD - 1e-6
                     if jy0 - 1e-6 <= u0 < jy1 - 1e-6 and in_row:
@@ -1740,10 +1762,10 @@ def build_minimall(p, rng):
                 # merged at the corners -- no overshooting butt joints).
                 can.tag = 'loggia'
                 el2.emit_railing_path(
-                    can, [(p0 + 0.045, -cd - 0.10),
+                    can, [(p0 + 0.045, -cd + 0.11),
                           (p0 + 0.045, -cd - 0.895),
                           (p1 - 0.045, -cd - 0.895),
-                          (p1 - 0.045, -cd - 0.10)],
+                          (p1 - 0.045, -cd + 0.11)],
                     z0=deck_top + 0.002, height=0.92, post_every=1.4)
             elif sel == 'recessed' and not interior_on:
                 # loggia floor: the deck continues INTO the recess (in
@@ -1755,52 +1777,65 @@ def build_minimall(p, rng):
         # projecting bays keep their own rail wraps; the run rail passes
         # in front of projecting decks so leave gaps there instead).
         can.tag = 'loggia'
-        rail_segs = []
-        # the access stair lands on the deck: the rail leaves a real
-        # OPENING there (west end normally; at the perpendicular front
-        # flight's span when the west end is a court arm).
-        cursor = 0.02 if west_blocked else -0.06
+        # CONTINUOUS deck railing: one mitred perimeter path per deck
+        # segment (side return -> front run -> side return), split only at
+        # the stair and at projecting balconies -- and those split ends
+        # reach PAST the stair rails / wrap legs so the runs physically
+        # JOIN (interpenetrate) instead of stopping short in the air.
+        y_front = -cd + 0.075
+        y_wall = -0.10
+        gaps_all = []
+        g0s, g1s = stair_x[0] + 0.06, stair_x[1] - 0.06   # crosses the
+        gaps_all.append((g0s, g1s))                       # stair rails
         for i, (_b0, _b1, o0, o1) in enumerate(bays_m):
             if bal_modes.get(i) == 'projecting':
-                rail_segs.append((cursor, o0 + 0.33))
-                cursor = o1 - 0.33
-        rail_segs.append((cursor, Wm - 0.02))
-        # the rail floated across the anchor / mid-arm deck CUTS
-        rail_segs = [s9 for (r0, r1) in rail_segs
-                     for s9 in split_segs(r0, r1)]
-        rail_segs = _seg_subtract(rail_segs, shop2_spans)
-        if west_blocked:
-            gapped = []
-            for (r0, r1) in rail_segs:
-                if r1 < stair_x[0] - 0.02 or r0 > stair_x[1] + 0.02:
-                    gapped.append((r0, r1))
-                    continue
-                if stair_x[0] - 0.02 - r0 > 0.1:
-                    gapped.append((r0, stair_x[0] - 0.02))
-                if r1 - (stair_x[1] + 0.02) > 0.1:
-                    gapped.append((stair_x[1] + 0.02, r1))
-            rail_segs = gapped
-        for (r0, r1) in rail_segs:
-            if r1 - r0 > 0.35:
-                el2.emit_railing(can, r0 + 0.02, r1 - 0.02, axis='x',
-                                 cross=-cd + 0.075, z0=deck_top + 0.002,
-                                 height=0.92, post_every=1.8)
-        # side RETURNS: every deck-segment end (and both edges of a shop2
-        # break) gets a rail across the deck depth -- the deck edge is
-        # protected all the way around, stair gap excepted.
-        ret_xs = set()
+                gaps_all.append((o0 + 0.44, o1 - 0.44))   # crosses the wrap
+        gaps_all.sort()
         for (s0, s1) in deck_segs:
-            ret_xs.add(round(s0, 3))
-            ret_xs.add(round(s1, 3))
-        for rx9 in sorted(ret_xs):
-            if stair_x[0] - 0.25 < rx9 < stair_x[1] + 0.25:
-                continue               # the stair lands here: keep it open
-            if rx9 < x_deck_w + 0.01 and west_blocked:
+            xi0, xi1 = s0 + 0.075, s1 - 0.075
+            if xi1 - xi0 < 0.3:
                 continue
-            side9 = 0.075 if rx9 < (x_deck_w + Wm) * 0.5 else -0.075
-            el2.emit_railing(can, -cd + 0.13, -0.10, axis='y',
-                             cross=rx9 + side9, z0=deck_top + 0.002,
-                             height=0.92, post_every=1.6)
+            paths = []
+            # the western overhang is SEPARATED from the building face --
+            # wrap its BACK edge too, ending buried inside the west wall
+            # corner (crosses y=0 into the wall solid: a real join, not a
+            # free end floating by the corner).
+            jut = (office and not west_blocked and layout != 'angled'
+                   and abs(s0 - x_deck_w) < 0.05 and wx - xi0 > 0.35)
+            if jut:
+                bx9 = min(wx + 0.13, xi1)
+                cur_path = [(bx9, 0.06), (bx9, y_wall),
+                            (xi0, y_wall), (xi0, y_front)]
+            else:
+                cur_path = [(xi0, y_wall), (xi0, y_front)]
+            cur_x = xi0
+            for (g0, g1) in gaps_all:
+                if g1 < xi0 or g0 > xi1:
+                    continue
+                g0c, g1c = max(g0, xi0), min(g1, xi1)
+                if g0c - cur_x > 0.25:
+                    cur_path.append((g0c, y_front))
+                    paths.append(cur_path)
+                elif len(cur_path) >= 2 and \
+                        abs(cur_path[0][1] - y_front) > 1e-6:
+                    paths.append(cur_path)         # short: keep the return
+                cur_x = max(cur_x, g1c)
+                cur_path = [(cur_x, y_front)]
+            if xi1 - cur_x > 0.25:
+                cur_path.append((xi1, y_front))
+                cur_path.append((xi1, y_wall))
+                paths.append(cur_path)
+            else:
+                paths.append([(xi1, y_front), (xi1, y_wall)])
+            for pth in paths:
+                if len(pth) < 2:
+                    continue
+                span9 = abs(pth[-1][0] - pth[0][0]) + abs(pth[-1][1] -
+                                                          pth[0][1])
+                if span9 < 0.25:
+                    continue
+                el2.emit_railing_path(can, pth, z0=deck_top + 0.002,
+                                      height=0.92, post_every=1.8)
         if corner:
             el2.emit_railing(can, -Wy + 0.05, -cd - 0.10, axis='y',
                              cross=Wm - cd + 0.075, z0=deck_top + 0.002,
@@ -2067,7 +2102,10 @@ def build_minimall(p, rng):
     if docks_on:
         lot.tag = 'lot'
         _box(lot, (0.0, D + 0.002, 0.0), (We, D + 6.0, 0.05), M_CONCRETE)
-        for (_mn, (j0, j1), inset) in dock_m:
+        for (_mn, dk9, inset) in dock_m:
+            if dk9 is None:
+                continue
+            (j0, j1) = dk9
             byf = (D - 0.6) if inset else D
             for bx in (j0 + 0.25, j1 - 0.45):
                 _box(lot, (bx, byf + 0.002, Z_DSILL - 0.32),
