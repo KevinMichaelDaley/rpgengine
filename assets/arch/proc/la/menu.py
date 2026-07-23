@@ -9,7 +9,7 @@ import bpy
 from . import params
 
 FAMILY_ORDER = [
-    "Residential", "Commercial", "Infrastructure", "Streetscape",
+    "Elements", "Residential", "Commercial", "Infrastructure", "Streetscape",
     "Decay", "Aberration", "Assembly",
 ]
 

@@ -38,8 +38,8 @@ import math
 from .. import params
 from ..geom import (
     _MATS, _Shell, _box, _material, _sheared_box,
-    M_CONCRETE, M_GLASS, M_METAL, M_SHUTTER, M_SIGN_A, M_SIGN_B, M_STUCCO,
-    M_TRIM,
+    M_ASPHALT, M_CONCRETE, M_GLASS, M_METAL, M_PLYWOOD, M_SHUTTER,
+    M_SIGN_A, M_SIGN_B, M_STUCCO, M_TRIM,
 )
 
 
@@ -808,6 +808,641 @@ def build_blade_sign(p, rng):
 
 
 # ---------------------------------------------------------------------------
+# rpg-oyu3 -- masonry arched doorway with keystone (0e)
+# ---------------------------------------------------------------------------
+DOORWAY_SPEC = [
+    dict(name="width", type='FLOAT', default=1.3, min=0.9, max=2.6,
+         unit='LENGTH', desc="Clear opening width"),
+    dict(name="height", type='FLOAT', default=2.6, min=2.0, max=4.0,
+         unit='LENGTH', desc="Total height to the arch crown"),
+    dict(name="voussoirs", type='INT', default=9, min=5, max=15,
+         desc="Arch stones (odd puts the keystone on centre)"),
+    dict(name="keystone", type='BOOL', default=True),
+    dict(name="fill", type='ENUM', default='door',
+         items=('door', 'open', 'boarded'),
+         desc="Opening below the spring line"),
+    dict(name="tympanum", type='ENUM', default='fanlight',
+         items=('fanlight', 'sunburst', 'louver', 'solid'),
+         desc="Arch infill above the spring (ignored when boarded)"),
+]
+
+
+def _voussoir(sh, cx, cz, r0, r1, th0, th1, y0, y1, mat):
+    """One radial arch-stone prism. Extrusion along y is parallel, so every
+    face (front/back sectors, radial sides, inner/outer sweeps) spans two
+    parallel lines -> all 6 faces are planar quads."""
+    def pt(r, th):
+        return (cx + r * math.cos(th), cz + r * math.sin(th))
+    (xa0, za0), (xa1, za1) = pt(r0, th0), pt(r0, th1)
+    (xb0, zb0), (xb1, zb1) = pt(r1, th0), pt(r1, th1)
+    q = sh.quad
+    q((xa0, y0, za0), (xa1, y0, za1), (xb1, y0, zb1), (xb0, y0, zb0), mat)
+    q((xa0, y1, za0), (xb0, y1, zb0), (xb1, y1, zb1), (xa1, y1, za1), mat)
+    q((xa0, y0, za0), (xb0, y0, zb0), (xb0, y1, zb0), (xa0, y1, za0), mat)
+    q((xa1, y0, za1), (xa1, y1, za1), (xb1, y1, zb1), (xb1, y0, zb1), mat)
+    q((xa0, y0, za0), (xa0, y1, za0), (xa1, y1, za1), (xa1, y0, za1), mat)
+    q((xb0, y0, zb0), (xb1, y0, zb1), (xb1, y1, zb1), (xb0, y1, zb0), mat)
+
+
+def _half_disc(sh, cx, cz, R, y, mat, M=8):
+    """Filled half-disc (flat, at plane y) tiled ENTIRELY in quads: a 4x2
+    inner grid over the half-width chord region plus an M-segment ring out
+    to the arc -- the ring path has M+1 points matching the arc 1:1, so
+    there is no degenerate fan and no ngons."""
+    ir = R * 0.5
+    xs_c = [cx - ir, cx - ir * 0.5, cx, cx + ir * 0.5, cx + ir]
+    zs2 = cz + ir * 0.5
+    q = sh.quad
+    for k in range(4):
+        q((xs_c[k], y, cz), (xs_c[k + 1], y, cz),
+          (xs_c[k + 1], y, zs2), (xs_c[k], y, zs2), mat)
+        q((xs_c[k], y, zs2), (xs_c[k + 1], y, zs2),
+          (xs_c[k + 1], y, cz + ir), (xs_c[k], y, cz + ir), mat)
+    path = [(cx + ir, cz), (cx + ir, zs2), (cx + ir, cz + ir),
+            (cx + ir * 0.5, cz + ir), (cx, cz + ir),
+            (cx - ir * 0.5, cz + ir), (cx - ir, cz + ir),
+            (cx - ir, zs2), (cx - ir, cz)]
+    for k in range(M):
+        tha, thb = math.pi * k / M, math.pi * (k + 1) / M
+        ax, az = cx + R * math.cos(tha), cz + R * math.sin(tha)
+        bx, bz = cx + R * math.cos(thb), cz + R * math.sin(thb)
+        (ix, iz), (jx, jz) = path[k], path[k + 1]
+        q((ax, y, az), (bx, y, bz), (jx, y, jz), (ix, y, iz), mat)
+
+
+def _plank(sh, cx_, cz_, ang, L, wdt, y0, y1, mat):
+    """Oriented plank prism in the xz plane: centre, angle, length, width,
+    extruded y0..y1. Rectangle cross-section swept along y -> 6 planar
+    quads."""
+    ux, uz = math.cos(ang), math.sin(ang)
+    px, pz = -uz, ux
+    h, g = L * 0.5, wdt * 0.5
+    c = [(cx_ - ux * h - px * g, cz_ - uz * h - pz * g),
+         (cx_ + ux * h - px * g, cz_ + uz * h - pz * g),
+         (cx_ + ux * h + px * g, cz_ + uz * h + pz * g),
+         (cx_ - ux * h + px * g, cz_ - uz * h + pz * g)]
+    q = sh.quad
+    q((c[0][0], y0, c[0][1]), (c[1][0], y0, c[1][1]),
+      (c[2][0], y0, c[2][1]), (c[3][0], y0, c[3][1]), mat)   # front
+    q((c[0][0], y1, c[0][1]), (c[3][0], y1, c[3][1]),
+      (c[2][0], y1, c[2][1]), (c[1][0], y1, c[1][1]), mat)   # back
+    for k in range(4):                             # sides
+        (ax, az), (bx, bz) = c[k], c[(k + 1) % 4]
+        q((ax, y0, az), (ax, y1, az), (bx, y1, bz), (bx, y0, bz), mat)
+
+
+def _quoin_jamb(sh, x0, x1, zs, t, proud_a, proud_b, nb, mat):
+    """ONE welded quoin jamb solid: the front face steps between two proud
+    depths per course as a vertical accordion (front quads + horizontal step
+    ledges). Side faces and end caps are SPLIT at the shallow depth line so
+    every ledge corner welds onto a real vert (an unsplit side face carried
+    them mid-edge -> T-junctions)."""
+    zh = zs / nb
+    q = sh.quad
+    deep = min(proud_a, proud_b)                   # more proud (further -y)
+    shal = max(proud_a, proud_b)
+    deep_, shal_ = min(proud_a, proud_b), max(proud_a, proud_b)
+    yc = [deep_ if ((nb - 1 - k) % 2 == 0) else shal_ for k in range(nb)]
+
+    def side(xx, flip, ya, yb, z0, z1):
+        a, b = (xx, ya, z0), (xx, yb, z0)
+        c, d = (xx, yb, z1), (xx, ya, z1)
+        if flip:
+            q(a, b, c, d, mat)
+        else:
+            q(a, d, c, b, mat)
+
+    for k in range(nb):
+        z0, z1 = k * zh, (k + 1) * zh
+        y = yc[k]
+        q((x0, y, z0), (x1, y, z0), (x1, y, z1), (x0, y, z1), mat)  # front
+        if k + 1 < nb:                             # step ledge to next course
+            yn = yc[k + 1]
+            lo, hi = (y, yn) if y < yn else (yn, y)
+            a, b = (x0, lo, z1), (x1, lo, z1)
+            c, d = (x1, hi, z1), (x0, hi, z1)
+            if yn > y:
+                q(a, b, c, d, mat)
+            else:
+                q(a, d, c, b, mat)
+        for xx, flip in ((x0, False), (x1, True)):  # sides, split at shal
+            if y < shal - 1e-9:
+                side(xx, flip, y, shal, z0, z1)
+            side(xx, flip, shal, t, z0, z1)
+        q((x0, t, z0), (x1, t, z0), (x1, t, z1), (x0, t, z1), mat)  # back
+    for (zc, first, top) in ((0.0, yc[0], False), (zs, yc[nb - 1], True)):
+        spans = ([(first, shal)] if first < shal - 1e-9 else []) + \
+                [(shal, t)]
+        for (ya, yb) in spans:                     # end caps, same splits
+            a, b = (x0, ya, zc), (x1, ya, zc)
+            c, d = (x1, yb, zc), (x0, yb, zc)
+            if top:
+                q(a, b, c, d, mat)
+            else:
+                q(a, d, c, b, mat)
+
+
+def build_arched_doorway(p, rng):
+    """Masonry arched doorway: opening x in [0,w] at wall plane y=0 (reveal
+    projects +y, surround proud -y). The arch is ONE welded ring sweep
+    (voussoir joints are texture, not geometry) over-swung 5 degrees past
+    the spring line so its ends embed INSIDE the jamb tops; the keystone is
+    a proud radial solid interpenetrating the ring; each jamb is a single
+    welded quoin-stepped solid. Nothing floats, nothing shares a plane."""
+    w, H = p["width"], p["height"]
+    nv = p["voussoirs"]
+    t = 0.30                                       # reveal depth
+    R = w * 0.5
+    zs = H - R                                     # spring line
+    cx = w * 0.5
+    sh = _Shell()
+    sh.tag = 'doors'
+
+    jw = 0.26
+    nb = max(3, int(round(zs / 0.45)))
+    _quoin_jamb(sh, -jw, -0.002, zs, t, -0.085, -0.045, nb, M_TRIM)
+    _quoin_jamb(sh, w + 0.002, w + jw, zs, t, -0.085, -0.045, nb, M_TRIM)
+    # threshold runs past the jamb faces (flush ends were coplanar).
+    _box(sh, (-jw - 0.02, -0.06, -0.10), (w + jw + 0.02, t + 0.01, 0.02),
+         M_CONCRETE)
+
+    # arch ring: welded tube(s), ring station per voussoir (even density),
+    # swung 5 deg past each spring so the caps hide inside the jambs. With a
+    # keystone the ring is INTERRUPTED: two arcs whose upper ends tuck 12
+    # mrad inside the keystone's radial faces (a continuous ring would run
+    # straight through the stone).
+    vd = jw - 0.045                                # ring depth < jamb width
+    over = math.radians(2.0)
+    if p["keystone"]:
+        half = math.pi / max(nv, 5) * 0.75
+        emb = 0.012
+        n_half = max(2, nv // 2)
+        _arc_tube(sh, cx, zs, R + 0.002, R + vd, -0.055, t, n_half, M_TRIM,
+                  th_a=-over, th_b=math.pi * 0.5 - half + emb)
+        _arc_tube(sh, cx, zs, R + 0.002, R + vd, -0.055, t, n_half, M_TRIM,
+                  th_a=math.pi * 0.5 + half - emb, th_b=math.pi + over)
+        _voussoir(sh, cx, zs, R - 0.01, R + vd + 0.09,
+                  math.pi * 0.5 - half, math.pi * 0.5 + half,
+                  -0.13, t - 0.01, M_TRIM)
+    else:
+        _arc_tube(sh, cx, zs, R + 0.002, R + vd, -0.055, t, nv, M_TRIM,
+                  th_a=-over, th_b=math.pi + over)
+
+    if p["fill"] == 'boarded':
+        # boarding that would actually hold: thick near-horizontal boards
+        # nailed across the opening with BOTH ends landing ON the surround
+        # (in the arch zone the reach follows the ring, never past it),
+        # irregular spacing/tilt, and 1-2 proud diagonal braces in front.
+        def half_open(z):
+            if z <= zs:
+                return w * 0.5
+            return math.sqrt(max(R * R - (z - zs) * (z - zs), 0.0))
+
+        z_key = zs + R - 0.34                  # keystone territory starts
+        def fit_plank(zc, ang, xoff, wdt, y0, y1, mat):
+            L = (w + 0.34) / max(0.4, math.cos(ang))
+            for _ in range(14):                    # shrink until both ends
+                fits = True                        # land on the surround
+                for sgn in (-1.0, 1.0):
+                    ex = abs(xoff + sgn * math.cos(ang) * L * 0.5)
+                    ez = zc + sgn * math.sin(ang) * L * 0.5
+                    if ex > half_open(ez) + 0.17 or ez > zs + R - 0.10:
+                        fits = False
+                if fits:
+                    break
+                L *= 0.92
+            if L > 0.5:
+                # a board that reaches the keystone zone RESTS on the
+                # keystone instead of intersecting it: displace it outward.
+                if zc + abs(math.sin(ang)) * L * 0.5 > z_key and y0 > -0.13:
+                    d = -0.134 - y0
+                    y0, y1 = y0 + d, y1 + d
+                _plank(sh, cx + xoff, zc, ang, L, wdt, y0, y1, mat)
+
+        npl = max(5, int(round(H / 0.30)))
+        zc = 0.20
+        k = 0
+        while zc < zs + R - 0.25:
+            ang = math.radians(rng.uniform(2.0, 10.0)) *                 (1 if rng.random() < 0.5 else -1)
+            fit_plank(zc + rng.uniform(-0.05, 0.05), ang,
+                      rng.uniform(-0.05, 0.05), rng.uniform(0.20, 0.29),
+                      -0.088 - 0.001 * (k % 3), -0.053 - 0.001 * (k % 3),
+                      M_PLYWOOD)
+            zc += rng.uniform(0.24, 0.42)          # irregular courses
+            k += 1
+        for sgn in ((1.0, -1.0) if w > 1.2 else (1.0,)):   # diagonal braces
+            ang = sgn * math.radians(rng.uniform(24.0, 34.0))
+            fit_plank(zs * rng.uniform(0.45, 0.6), ang,
+                      rng.uniform(-0.06, 0.06), rng.uniform(0.22, 0.28),
+                      -0.134, -0.098, M_PLYWOOD)
+    elif p["fill"] == 'door':
+        # paneled door leaf set mid-reveal, up to the spring line.
+        yd = t * 0.55                              # leaf plane in the reveal
+        zt = zs - 0.02
+        _box(sh, (0.015, yd, 0.0), (w - 0.015, yd + 0.05, zt), M_PLYWOOD)
+        stiles = [0.015, w - 0.015 - 0.09]
+        if w > 1.6:
+            stiles.append(w * 0.5 - 0.045)
+        for sx in stiles:                          # proud stiles
+            _box(sh, (sx, yd - 0.014, 0.008), (sx + 0.09, yd + 0.01,
+                 zt - 0.008), M_PLYWOOD)
+        for (za, zb) in ((0.0, 0.16), (0.92, 1.04), (zt - 0.13, zt)):
+            _box(sh, (0.02, yd - 0.012, za + 0.006),
+                 (w - 0.02, yd + 0.008, zb - 0.006), M_PLYWOOD)  # rails
+        _box(sh, (0.01, yd - 0.006, zs - 0.045), (w - 0.01, yd + 0.056,
+             zs - 0.012), M_PLYWOOD)               # transom bar over the leaf
+
+    if p["fill"] != 'boarded':                     # tympanum templates
+        yd = t * 0.55
+        ty = p["tympanum"]
+        if ty == 'fanlight':                       # radial glazing
+            _half_disc(sh, cx, zs, R - 0.015, yd + 0.03, M_GLASS)
+            for k in range(1, 4):
+                th = math.pi * k / 4.0
+                _voussoir(sh, cx, zs, 0.04, R - 0.02, th - 0.010,
+                          th + 0.010, yd - 0.005, yd + 0.055, M_PLYWOOD)
+            _box(sh, (cx - 0.06, yd - 0.005, zs - 0.015),
+                 (cx + 0.06, yd + 0.055, zs + 0.06), M_PLYWOOD)
+        elif ty == 'sunburst':                     # deco radiating fins
+            _half_disc(sh, cx, zs, R - 0.012, yd + 0.045, M_STUCCO)
+            nf = 9
+            for k in range(nf):
+                th = math.pi * (k + 0.5) / nf
+                _voussoir(sh, cx, zs, 0.10, R - 0.045, th - 0.016,
+                          th + 0.016, yd - 0.045, yd + 0.055, M_STUCCO)
+            _voussoir(sh, cx, zs, 0.025, 0.13, 0.0, math.pi,
+                      yd - 0.055, yd + 0.050, M_STUCCO)          # half hub
+        elif ty == 'louver':                       # tilted vent blades
+            zb2 = zs + 0.07
+            while zb2 < zs + R - 0.10:
+                # widest opening across the blade's z-range (its low edge),
+                # +35 mm so the ends bury inside the reveal -- anchored,
+                # never floating.
+                hw = math.sqrt(max(R * R - (zb2 - 0.045 - zs) ** 2, 0.0))
+                hw = min(hw + 0.035, R - 0.01)
+                _sheared_box(sh, cx - hw, cx + hw, yd - 0.030, yd + 0.055,
+                             zb2 - 0.045, zb2, 0.020, M_PLYWOOD)
+                zb2 += 0.095
+        else:                                      # 'solid' recessed infill
+            _half_disc(sh, cx, zs, R - 0.012, yd + 0.05, M_STUCCO)
+    return [sh.to_object("LA_Elem_Doorway", [_material(n) for n in _MATS])]
+
+
+# ---------------------------------------------------------------------------
+# rpg-pvk7 -- recessed streamline arched entry porch (0e)
+# ---------------------------------------------------------------------------
+PORCH_SPEC = [
+    dict(name="width", type='FLOAT', default=1.6, min=1.1, max=2.6,
+         unit='LENGTH', desc="Clear opening width"),
+    dict(name="height", type='FLOAT', default=2.9, min=2.3, max=4.0,
+         unit='LENGTH', desc="Total height to the arch crown"),
+    dict(name="recess", type='FLOAT', default=1.1, min=0.5, max=2.0,
+         unit='LENGTH', desc="Porch depth into the wall"),
+    dict(name="bands", type='INT', default=3, min=1, max=5,
+         desc="Concentric streamline trim bands"),
+]
+
+
+def _arc_tube(sh, cx, cz, r0, r1, y0, y1, n, mat, th_a=0.0, th_b=math.pi):
+    """Half-annulus SOLID as one welded swept tube: a 4-vert (r x y) section
+    ringed at every arc station, capped at both ends. Every face spans two
+    parallel lines (extrusion along y / secant facets) -> planar quads; one
+    manifold island (butted voussoir chunks shared radial faces -> non-
+    manifold)."""
+    rings = []
+    for k in range(n + 1):
+        th = th_a + (th_b - th_a) * k / n
+        c, s = math.cos(th), math.sin(th)
+        rings.append(((cx + r0 * c, y0, cz + r0 * s),
+                      (cx + r1 * c, y0, cz + r1 * s),
+                      (cx + r1 * c, y1, cz + r1 * s),
+                      (cx + r0 * c, y1, cz + r0 * s)))
+    (a0, b0, c0, d0) = rings[0]
+    sh.quad(a0, b0, c0, d0, mat)                   # start cap
+    for k in range(n):
+        (a1, b1, c1, d1) = rings[k]
+        (a2, b2, c2, d2) = rings[k + 1]
+        sh.quad(a1, a2, b2, b1, mat)               # front (y0)
+        sh.quad(d1, c1, c2, d2, mat)               # back (y1)
+        sh.quad(b1, b2, c2, c1, mat)               # outer sweep
+        sh.quad(a1, d1, d2, a2, mat)               # inner sweep
+    (an, bn, cn, dn) = rings[-1]
+    sh.quad(an, dn, cn, bn, mat)                   # end cap
+
+
+def build_entry_porch(p, rng):
+    """Streamline-moderne recessed entry: opening x in [0,w] at wall plane
+    y=0, recess extends +y. Ships the recess interior (jamb reveals, barrel
+    ceiling, back wall with door, floor + stoop) and the applied surround
+    (concentric welded arc-tube bands stepping down in proudness, continued
+    as stacked pilaster boxes below the spring line). The assembly provides
+    the surrounding wall. Every abutting face grid is SPLIT at its
+    neighbours' stations (reveal at door-head height, floor and header at
+    the door jambs / disc chords) so no vert lands mid-edge."""
+    w, H = p["width"], p["height"]
+    dp = p["recess"]
+    R = w * 0.5
+    zs = H - R
+    cx = w * 0.5
+    sh = _Shell()
+    sh.tag = 'doors'
+    M = 8                                          # arc segments
+
+    def arc(r, k, n=M):
+        th = math.pi * k / n
+        return (cx + r * math.cos(th), zs + r * math.sin(th))
+
+    dw = min(1.0, w - 0.3)
+    dh = min(2.05, zs - 0.15)      # door head must stay below the spring
+    dx0 = cx - dw * 0.5
+    q = sh.quad
+
+    # barrel ceiling (faces INTO the porch).
+    for k in range(M):
+        (x0, z0), (x1, z1) = arc(R, k), arc(R, k + 1)
+        q((x0, 0.0, z0), (x0, dp, z0), (x1, dp, z1), (x1, 0.0, z1), M_STUCCO)
+    # jamb reveals, split at the door-head line (the back-wall flank corner
+    # vert would otherwise sit mid-edge).
+    for xx, flip in ((0.0, False), (w, True)):
+        for (za, zb) in ((0.0, dh), (dh, zs)):
+            a, b = (xx, 0.0, za), (xx, dp, za)
+            c, d = (xx, dp, zb), (xx, 0.0, zb)
+            if flip:
+                q(a, b, c, d, M_STUCCO)
+            else:
+                q(a, d, c, b, M_STUCCO)
+    # porch floor, split at the door jambs (back-wall flank bottom corners).
+    for (xa, xb) in ((0.0, dx0), (dx0, dx0 + dw), (dx0 + dw, w)):
+        q((xa, 0.0, 0.0), (xb, 0.0, 0.0), (xb, dp, 0.0), (xa, dp, 0.0),
+          M_CONCRETE)
+
+    # back wall at y=dp. The disc chord half-width DERIVES from the door
+    # (ir = dw/2) so the door jambs, header columns, disc grid and ring path
+    # all share one station set -- alignment by construction, no mid-edge
+    # verts anywhere.
+    ir = dw * 0.5
+    xs_c = [cx - ir, cx - ir * 0.5, cx, cx + ir * 0.5, cx + ir]
+    q((0.0, dp, 0.0), (dx0, dp, 0.0), (dx0, dp, dh), (0.0, dp, dh), M_STUCCO)
+    q((dx0 + dw, dp, 0.0), (w, dp, 0.0), (w, dp, dh), (dx0 + dw, dp, dh),
+      M_STUCCO)
+    hdr_xs = sorted(set([0.0, dx0, dx0 + dw, w] + xs_c))   # header columns
+    # (split at BOTH the disc chords and the door jambs, so the flank top
+    # corners + disc verts all weld onto real header verts)
+    for k in range(len(hdr_xs) - 1):
+        q((hdr_xs[k], dp, dh), (hdr_xs[k + 1], dp, dh),
+          (hdr_xs[k + 1], dp, zs), (hdr_xs[k], dp, zs), M_STUCCO)
+    # arch disc: 4x2 inner grid + an 8-segment ring out to the arc. The ring
+    # path has 9 points matching the 8 arc segments 1:1 (no degenerate fan).
+    zs2 = zs + ir * 0.5
+    for k in range(4):                             # inner grid, 2 rows
+        q((xs_c[k], dp, zs), (xs_c[k + 1], dp, zs),
+          (xs_c[k + 1], dp, zs2), (xs_c[k], dp, zs2), M_STUCCO)
+        q((xs_c[k], dp, zs2), (xs_c[k + 1], dp, zs2),
+          (xs_c[k + 1], dp, zs + ir), (xs_c[k], dp, zs + ir), M_STUCCO)
+    path = [(cx + ir, zs), (cx + ir, zs2), (cx + ir, zs + ir),
+            (cx + ir * 0.5, zs + ir), (cx, zs + ir), (cx - ir * 0.5, zs + ir),
+            (cx - ir, zs + ir), (cx - ir, zs2), (cx - ir, zs)]
+    for k in range(M):
+        (ax, az), (bx, bz) = arc(R, k), arc(R, k + 1)
+        (ix, iz), (jx, jz) = path[k], path[k + 1]
+        # the k=0 / k=M-1 quads own the long z=zs chord edges (arc end ->
+        # path corner); split them at the door-jamb station when it falls
+        # inside, so the header-column verts weld instead of T-junctioning.
+        split_x = None
+        if k == 0 and ix < dx0 + dw < ax:
+            split_x = dx0 + dw
+        elif k == M - 1 and bx < dx0 < jx:
+            split_x = dx0
+        if split_x is None:
+            q((ax, dp, az), (bx, dp, bz), (jx, dp, jz), (ix, dp, iz),
+              M_STUCCO)
+        else:
+            lo, hi = (ix, ax) if k == 0 else (bx, jx)
+            tt = (split_x - lo) / (hi - lo)
+            if k == 0:
+                mx_, mz_ = ix + (bx - ix) * tt, iz + (bz - iz) * tt
+                q((split_x, dp, zs), (ax, dp, az), (bx, dp, bz),
+                  (mx_, dp, mz_), M_STUCCO)
+                q((ix, dp, iz), (split_x, dp, zs), (mx_, dp, mz_),
+                  (jx, dp, jz), M_STUCCO)
+            else:
+                mx_, mz_ = ax + (jx - ax) * tt, az + (jz - az) * tt
+                q((ax, dp, az), (bx, dp, bz), (split_x, dp, zs),
+                  (mx_, dp, mz_), M_STUCCO)
+                q((mx_, dp, mz_), (split_x, dp, zs), (jx, dp, jz),
+                  (ix, dp, iz), M_STUCCO)
+    _box(sh, (dx0 + 0.02, dp - 0.045, 0.01), (dx0 + dw - 0.02, dp - 0.005,
+         dh - 0.02), M_PLYWOOD)                    # door leaf (proud)
+    for sx in (dx0 + 0.03, dx0 + dw - 0.10):       # proud stiles
+        _box(sh, (sx, dp - 0.058, 0.02), (sx + 0.07, dp - 0.04, dh - 0.03),
+             M_PLYWOOD)
+    for (za, zb) in ((0.02, 0.15), (0.95, 1.05), (dh - 0.14, dh - 0.03)):
+        _box(sh, (dx0 + 0.035, dp - 0.056, za), (dx0 + dw - 0.035,
+             dp - 0.042, zb), M_PLYWOOD)           # rails
+
+    # streamline bands: welded arc tubes + stacked pilasters below (tops
+    # tucked 20 mm past the spring so the tube caps hide inside them).
+    bw = 0.12
+    for i in range(p["bands"]):
+        proud = 0.10 - i * 0.025
+        r0 = R + 0.02 + i * bw
+        r1 = r0 + bw - 0.015
+        _arc_tube(sh, cx, zs, r0, r1, -proud, 0.02, M, M_STUCCO)
+        xl0 = -(0.02 + (i + 1) * bw) + 0.015 - 0.012
+        xl1 = -(0.02 + i * bw) + 0.012
+        # nested pilasters overlap in x: STAGGER their back/top/bottom
+        # planes per band so no two boxes (or the band tube) share a plane.
+        yb = 0.031 + 0.004 * i
+        zt2 = zs + 0.02 + 0.004 * i
+        zb2 = -0.002 * (i + 1)
+        for (x0, x1) in ((xl0, xl1), (w - xl1, w - xl0)):
+            _box(sh, (x0, -proud - 0.010, zb2), (x1, yb, zt2), M_STUCCO)
+    _box(sh, (-0.25, -0.42, -0.001), (w + 0.25, dp * 0.5, 0.14),
+         M_CONCRETE)                               # stoop step
+    return [sh.to_object("LA_Elem_Porch", [_material(n) for n in _MATS])]
+
+
+# ---------------------------------------------------------------------------
+# rpg-qlur -- flat tar roof: parapet + mechanical penthouses (0f)
+# ---------------------------------------------------------------------------
+ROOF_SPEC = [
+    dict(name="width", type='FLOAT', default=8.0, min=3.0, max=20.0,
+         unit='LENGTH'),
+    dict(name="depth", type='FLOAT', default=6.0, min=3.0, max=16.0,
+         unit='LENGTH'),
+    dict(name="parapet", type='FLOAT', default=0.75, min=0.3, max=1.3,
+         unit='LENGTH', desc="Parapet height above the roof plane"),
+    dict(name="bulkhead", type='BOOL', default=True,
+         desc="Stair bulkhead penthouse"),
+    dict(name="ac_units", type='INT', default=2, min=0, max=6),
+    dict(name="vents", type='INT', default=3, min=0, max=8),
+]
+
+
+def build_tar_roof(p, rng):
+    """Flat tar roof cap for a W x D footprint (roof plane z=0): tar slab,
+    MITRED parapet ring (welded tube, trapezoid corner faces -- no butted
+    corner boxes), proud cap ring offset so no plane is shared, and seeded
+    mechanical clutter (stair bulkhead wedge, AC units, vent stacks, a pipe)
+    placed on a shuffled grid inside the parapet margin."""
+    W, D = p["width"], p["depth"]
+    ph = p["parapet"]
+    t = 0.16                                       # parapet thickness
+    sh = _Shell(recalc=True)
+    sh.tag = 'parapet'
+    _box(sh, (t + 0.005, t + 0.005, -0.12), (W - t - 0.005, D - t - 0.005,
+         0.0), M_ASPHALT)                          # tar slab
+
+    def ring(o0, o1, i0, i1, z0, z1, mat):
+        """Mitred rectangular ring tube: outer rect o, inner rect i."""
+        oc = [(o0[0], o0[1]), (o1[0], o0[1]), (o1[0], o1[1]), (o0[0], o1[1])]
+        ic = [(i0[0], i0[1]), (i1[0], i0[1]), (i1[0], i1[1]), (i0[0], i1[1])]
+        for z, up in ((z1, True), (z0, False)):    # top + bottom rings
+            for k in range(4):
+                (oxa, oya), (oxb, oyb) = oc[k], oc[(k + 1) % 4]
+                (ixa, iya), (ixb, iyb) = ic[k], ic[(k + 1) % 4]
+                a, b = (oxa, oya, z), (oxb, oyb, z)
+                c, d = (ixb, iyb, z), (ixa, iya, z)
+                if up:
+                    sh.quad(a, b, c, d, mat)
+                else:
+                    sh.quad(a, d, c, b, mat)
+        for k in range(4):                         # outer + inner walls
+            (oxa, oya), (oxb, oyb) = oc[k], oc[(k + 1) % 4]
+            (ixa, iya), (ixb, iyb) = ic[k], ic[(k + 1) % 4]
+            sh.quad((oxa, oya, z0), (oxb, oyb, z0), (oxb, oyb, z1),
+                    (oxa, oya, z1), mat)
+            sh.quad((ixa, iya, z0), (ixa, iya, z1), (ixb, iyb, z1),
+                    (ixb, iyb, z0), mat)
+
+    ring((0.0, 0.0), (W, D), (t, t), (W - t, D - t), -0.06, ph, M_STUCCO)
+    ring((-0.025, -0.025), (W + 0.025, D + 0.025),
+         (t - 0.025, t - 0.025), (W - t + 0.025, D - t + 0.025),
+         ph - 0.005, ph + 0.055, M_TRIM)           # proud cap
+
+    # mechanical clutter on a shuffled placement grid.
+    m = t + 0.45
+    cols, rows = 3, 2
+    slots = [(m + (W - 2 * m) * (i + 0.5) / cols,
+              m + (D - 2 * m) * (j + 0.5) / rows)
+             for i in range(cols) for j in range(rows)]
+    rng.shuffle(slots)
+    # the bulkhead DOOR (on the -y face) needs a clear egress path: nothing
+    # may be placed in the rectangle in front of it.
+    clear = None
+    if p["bulkhead"] and slots:
+        (bx, by) = slots.pop()
+        bw2, bd2 = min(1.6, W * 0.3), min(1.2, D * 0.3)
+        _wedge_box(sh, bx - bw2 * 0.5, bx + bw2 * 0.5, by - bd2 * 0.5,
+                   by + bd2 * 0.5, -0.02, 2.15, 1.9, M_STUCCO)
+        _box(sh, (bx - 0.35, by - bd2 * 0.5 - 0.035, 0.0),
+             (bx + 0.35, by - bd2 * 0.5 + 0.01, 1.85), M_METAL)   # door
+        clear = (bx - 0.9, bx + 0.9, by - bd2 * 0.5 - 1.6, by - bd2 * 0.5)
+        slots = [(sx, sy) for (sx, sy) in slots
+                 if not (clear[0] - 0.45 < sx < clear[1] + 0.45 and
+                         clear[2] - 0.45 < sy < clear[3] + 0.45)]
+
+    def blocked(px, py, r):
+        return clear is not None and (clear[0] - r < px < clear[1] + r and
+                                      clear[2] - r < py < clear[3] + r)
+
+    for _ in range(p["ac_units"]):
+        if not slots:
+            break
+        (ax, ay) = slots.pop()
+        aw = rng.uniform(0.5, 0.85)
+        _box(sh, (ax - aw * 0.5, ay - aw * 0.5, -0.02),
+             (ax + aw * 0.5, ay + aw * 0.5, 0.55), M_METAL)
+        _box(sh, (ax - aw * 0.35, ay - aw * 0.35, 0.53),
+             (ax + aw * 0.35, ay + aw * 0.35, 0.60), M_SHUTTER)   # fan grille
+    for _ in range(p["vents"]):
+        vx = rng.uniform(m, W - m)
+        vy = rng.uniform(m, D - m)
+        for _try in range(8):                      # keep the egress clear
+            if not blocked(vx, vy, 0.15):
+                break
+            vx, vy = rng.uniform(m, W - m), rng.uniform(m, D - m)
+        if blocked(vx, vy, 0.15):
+            continue
+        vh = rng.uniform(0.35, 0.9)
+        _box(sh, (vx - 0.07, vy - 0.07, -0.02), (vx + 0.07, vy + 0.07, vh),
+             M_METAL)
+        _box(sh, (vx - 0.11, vy - 0.11, vh - 0.005), (vx + 0.11, vy + 0.11,
+             vh + 0.05), M_METAL)                  # rain cap
+    px_, py_ = rng.uniform(m, W - m), rng.uniform(m, D - m)
+    for _try in range(8):                          # keep the egress clear
+        if not blocked(px_, py_, 0.1):
+            break
+        px_, py_ = rng.uniform(m, W - m), rng.uniform(m, D - m)
+    if not blocked(px_, py_, 0.1):
+        _vbar(sh, px_, py_, [(-0.02, 0.0), (1.3, 0.0)], 0.06, M_METAL)
+    return [sh.to_object("LA_Elem_TarRoof", [_material(n) for n in _MATS])]
+
+
+# ---------------------------------------------------------------------------
+# rpg-imsr -- projecting canvas storefront awning (0g)
+# ---------------------------------------------------------------------------
+CANVAS_SPEC = [
+    dict(name="width", type='FLOAT', default=3.0, min=1.2, max=6.0,
+         unit='LENGTH'),
+    dict(name="depth", type='FLOAT', default=1.0, min=0.5, max=1.8,
+         unit='LENGTH', desc="Projection from the wall"),
+    dict(name="drop", type='FLOAT', default=0.55, min=0.2, max=1.0,
+         unit='LENGTH', desc="Fall from wall to front edge"),
+    dict(name="valance", type='FLOAT', default=0.28, min=0.0, max=0.5,
+         unit='LENGTH', desc="Hanging front skirt height"),
+    dict(name="stripes", type='BOOL', default=True),
+]
+
+
+def build_canvas_awning(p, rng):
+    """Striped canvas storefront awning: wall plane y=0 (mount top z=0),
+    fabric sloping to (-depth, -drop). Fabric is one welded sheet segmented
+    per stripe (even density, stripes alternate the sign palette); the
+    valance hangs at the front edge with a scalloped bottom (two planar
+    quads per stripe, mid-point dipped). Side gussets close the triangles;
+    sheared side arms + a front tube bar carry it."""
+    W, D, drop = p["width"], p["depth"], p["drop"]
+    vh = p["valance"]
+    sh = _Shell()
+    sh.tag = 'awnings'
+    ns = max(2, int(round(W / 0.42)))
+    xs = [W * k / ns for k in range(ns + 1)]
+    for k in range(ns):                            # sloped fabric, per stripe
+        mat = (M_SIGN_A if (k % 2) else M_TRIM) if p["stripes"] else M_SIGN_A
+        xm = (xs[k] + xs[k + 1]) * 0.5
+        # two columns per stripe so the fabric's front-edge verts match the
+        # valance scallop mid-verts (mid-vert on a long edge = T-junction).
+        for (xa, xb) in ((xs[k], xm), (xm, xs[k + 1])):
+            sh.quad((xa, 0.0, 0.0), (xb, 0.0, 0.0),
+                    (xb, -D, -drop), (xa, -D, -drop), mat)
+    if vh > 0.01:
+        for k in range(ns):                        # scalloped valance
+            mat = (M_SIGN_A if (k % 2) else M_TRIM) if p["stripes"] \
+                else M_SIGN_A
+            xm = (xs[k] + xs[k + 1]) * 0.5
+            zt = -drop
+            sh.quad((xs[k], -D, zt), (xm, -D, zt), (xm, -D, zt - vh),
+                    (xs[k], -D, zt - vh * 0.72), mat)
+            sh.quad((xm, -D, zt), (xs[k + 1], -D, zt),
+                    (xs[k + 1], -D, zt - vh * 0.72), (xm, -D, zt - vh), mat)
+    for xx, flip in ((0.012, False), (W - 0.012, True)):   # side gussets
+        a, b = (xx, -0.005, -0.02), (xx, -D + 0.01, -drop - 0.01)
+        c, d = (xx, -D + 0.01, -drop - vh * 0.5), (xx, -0.005, -0.55 - vh * 0.3)
+        if flip:
+            sh.quad(a, b, c, d, M_SIGN_A)
+        else:
+            sh.quad(a, d, c, b, M_SIGN_A)
+    for (x0, x1) in ((0.0, 0.04), (W - 0.04, W)):  # sheared side arms
+        _sheared_box(sh, x0, x1, -0.005, -D + 0.03, -0.035, -drop - 0.012,
+                     0.05, M_METAL)
+    _bar(sh, [(x, -drop - 0.012) for x in xs], 0.045, 0.045, M_METAL,
+         axis='x', center=-D + 0.035)              # front tube, per-stripe rings
+    return [sh.to_object("LA_Elem_CanvasAwning",
+                         [_material(n) for n in _MATS])]
+
+
+# ---------------------------------------------------------------------------
 # registration
 # ---------------------------------------------------------------------------
 params.register_tool(idname="la_railing", label="Railing Kit",
@@ -834,3 +1469,15 @@ params.register_tool(idname="la_awning", label="Corrugated Awning",
 params.register_tool(idname="la_blade_sign", label="Blade Sign",
                      family="Elements", build=build_blade_sign,
                      spec=BLADE_SPEC)
+params.register_tool(idname="la_arched_doorway", label="Arched Doorway",
+                     family="Elements", build=build_arched_doorway,
+                     spec=DOORWAY_SPEC)
+params.register_tool(idname="la_entry_porch", label="Streamline Entry Porch",
+                     family="Elements", build=build_entry_porch,
+                     spec=PORCH_SPEC)
+params.register_tool(idname="la_tar_roof", label="Tar Roof + Parapet",
+                     family="Elements", build=build_tar_roof,
+                     spec=ROOF_SPEC)
+params.register_tool(idname="la_canvas_awning", label="Canvas Awning",
+                     family="Elements", build=build_canvas_awning,
+                     spec=CANVAS_SPEC)
