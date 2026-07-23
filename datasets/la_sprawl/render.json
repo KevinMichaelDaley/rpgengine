@@ -25,5 +25,7 @@
  "_freeze": "bake-and-freeze: trace ~48 ticks to convergence, then stop dispatching (static sun/world). Zero per-frame GI cost after.",
  "gi_stat_scale": 0.5,
  "static_dyn_w": 3.0,
- "gi_samples": 1024
+ "gi_samples": 1024,
+ "dir_softness": 1.8,
+ "dir_pcf_taps": 16
 }
