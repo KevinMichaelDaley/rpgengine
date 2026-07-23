@@ -129,19 +129,20 @@ static void mask_begin_target(shadow_csm_t *csm, uint32_t color_tex,
     csm->glClear(GL_DEPTH_BUFFER_BIT);
 }
 
-/* Make one 2D target of the dynamic mask pair. */
+/* Make one 2D target of the dynamic mask pair. COLOR is bilinear -- the
+ * transmission tint x coverage is a filterable field once the receiver gates
+ * depth softly (see pbr_csm_glass) -- while DEPTH stays point-sampled: lerped
+ * silhouette distances would invent phantom mid-depths. */
 static uint32_t mask_make_2d(shadow_csm_t *csm, uint32_t internal_format,
-                             uint32_t format, uint32_t res)
+                             uint32_t format, uint32_t res, int32_t filt)
 {
     uint32_t tex = 0;
     csm->glGenTextures(1, &tex);
     csm->glBindTexture(GL_TEXTURE_2D, tex);
     csm->glTexImage2D(GL_TEXTURE_2D, 0, (int32_t)internal_format, (int32_t)res,
                       (int32_t)res, 0, format, GL_FLOAT, NULL);
-    /* Point-sample: the dynamic tint/coverage/distance mask is discontinuous like
-     * the static one -- bilinear erodes glass shadows at their silhouette. */
-    csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filt);
+    csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filt);
     csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     csm->glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     return tex;
@@ -169,13 +170,15 @@ bool shadow_csm_mask_init(shadow_csm_t *csm, const gl_loader_t *loader)
         .resolution = csm->static_res,
         .layers = csm->cascades,
         .internal_format = GL_RGBA16F,
-        /* Point-sample: tint+coverage is discontinuous at the glass silhouette;
-         * bilinear would bleed coverage toward the empty clear value and drop the
-         * shadow at every edge (rpg-29zj follow-up). */
-        .nearest = true,
+        /* BILINEAR: with the receiver's soft depth gate (pbr_csm_glass) the
+         * tint x coverage field is filterable, and edge bleed becomes the glass
+         * shadow's own penumbra instead of per-tap binary speckle. (The old
+         * point-sampled + hard-gate combo speckled every translucency boundary.) */
+        .nearest = false,
     };
     shadow_atlas_config_t depth_cfg = color_cfg;
-    depth_cfg.internal_format = GL_R32F;   /* nearest carries over (glass distance). */
+    depth_cfg.internal_format = GL_R32F;
+    depth_cfg.nearest = true;   /* glass distance: lerped silhouettes lie. */
     if (!shadow_atlas_init(&csm->mask_color_atlas, &color_cfg) ||
         !shadow_atlas_init(&csm->mask_depth_atlas, &depth_cfg))
         return false;
@@ -193,9 +196,11 @@ bool shadow_csm_mask_init(shadow_csm_t *csm, const gl_loader_t *loader)
                                (int32_t)csm->static_res,
                                (int32_t)csm->static_res);
     csm->dyn_mask_color = mask_make_2d(csm, GL_RGBA16F, GL_RGBA,
-                                       csm->dynamic_res);
+                                       csm->dynamic_res,
+                                       (int32_t)GL_LINEAR);
     csm->dyn_mask_depth = mask_make_2d(csm, GL_R32F, GL_RED,
-                                       csm->dynamic_res);
+                                       csm->dynamic_res,
+                                       (int32_t)GL_NEAREST);
     csm->glGenRenderbuffers(1, &csm->dyn_mask_depth_rb);
     csm->glBindRenderbuffer(GL_RENDERBUFFER, csm->dyn_mask_depth_rb);
     csm->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24,
