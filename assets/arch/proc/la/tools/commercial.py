@@ -520,6 +520,71 @@ def _flight_straight(shell, x0, x1, y_base, y_top, z_base, z_top,
           M_CONCRETE)
 
 
+def _sloped_bar(shell, cx, hw, y0, z0, y1, z1, rt, mat):
+    """A welded rectangular top-rail bar (width 2*hw in x, depth rt in z) swept in
+    a straight line from (y0,z0) to (y1,z1) -- the pitched flight rail or a level
+    return. Six quads, its own island, no coincident planes."""
+    a0, a1 = (cx - hw, y0, z0), (cx + hw, y0, z0)             # base top edge
+    a2, a3 = (cx + hw, y0, z0 - rt), (cx - hw, y0, z0 - rt)   # base bottom edge
+    b0, b1 = (cx - hw, y1, z1), (cx + hw, y1, z1)             # far  top edge
+    b2, b3 = (cx + hw, y1, z1 - rt), (cx - hw, y1, z1 - rt)   # far  bottom edge
+    q = shell.quad
+    q(a0, a1, b1, b0, mat)      # top (+z)
+    q(a3, b3, b2, a2, mat)      # bottom (-z)
+    q(a0, b0, b3, a3, mat)      # -x side
+    q(a1, a2, b2, b1, mat)      # +x side
+    q(a0, a3, a2, a1, mat)      # base cap
+    q(b0, b1, b2, b3, mat)      # far cap
+
+
+def _flight_railing(shell, x0, x1, y_base, y_top, z_base, z_top, foot_hi,
+                    rail_h=0.92, post_w=0.045, rail_w=0.06, rail_t=0.05,
+                    landing=0.34):
+    """Welded pitched handrails on BOTH stringers of a straight flight (rpg-ro7o
+    B1.3): posts embedded 20 mm into the stringer top, a top rail parallel to the
+    pitch MITRED to a short level return over the top landing, and a taller newel
+    at each end. Metal, tagged 'steps'; 100% quads, no coincident planes."""
+    st, cover = 0.09, 0.06
+    keep = shell.tag
+    shell.tag = 'steps'
+    span = y_top - y_base
+    rise = z_top - z_base
+    if abs(span) < 1e-4:
+        shell.tag = keep
+        return
+    ydir = 1.0 if span >= 0 else -1.0
+
+    def stop(y):                       # stringer top-surface z at plan y (pitch line)
+        t = (y - y_base) / span
+        return z_base + cover + rise * t
+
+    hw = rail_w * 0.5
+    for (sx0, sx1) in ((x0, x0 + st), (x1 - st, x1)):
+        cx = 0.5 * (sx0 + sx1)
+        # posts (embedded 20 mm into the stringer top), evenly along the pitch.
+        n = max(2, int(round(abs(span) / 1.0)))
+        for k in range(n + 1):
+            y = y_base + span * (k / n)
+            zt = stop(y)
+            hnewel = rail_h + (0.12 if (k == 0 or k == n) else 0.0)   # taller newels
+            _box(shell, (cx - post_w / 2, y - post_w / 2, zt - 0.02),
+                        (cx + post_w / 2, y + post_w / 2, zt + hnewel), M_METAL)
+        # pitched top rail, base -> just PAST the pitch break (overlaps the level
+        # return below so the two bars are separate manifold islands that weld
+        # visually at the newel -- butting them exactly shared edges = non-manifold).
+        zb0, zb1 = stop(y_base) + rail_h, stop(y_top) + rail_h
+        over = 0.12
+        y_ext = y_top + ydir * over
+        z_ext = zb1 + (rise / span) * (over * ydir)   # continue the pitch slope
+        _sloped_bar(shell, cx, hw, y_base, zb0, y_ext, z_ext, rail_t, M_METAL)
+        # level return over the top landing: starts BACK down the pitch (its base
+        # cap buried inside the pitched bar) and runs level onto the deck.
+        yl0 = y_top - ydir * over
+        yl1 = y_top + ydir * landing
+        _sloped_bar(shell, cx, hw, yl0, zb1, yl1, zb1, rail_t, M_METAL)
+    shell.tag = keep
+
+
 def build_minimall(p, rng):
     """Build the mini-mall per the module topology plan. Returns objects."""
     n = p["tenants"]
@@ -1713,6 +1778,10 @@ def build_minimall(p, rng):
         run = 0.26 * max(3, int(round(rise / 0.185)))
         _flight_straight(stair, stair_x[0], stair_x[1], -cd - run, -cd,
                          0.0, rise, 0.0, 0.16)
+        # B1.3 (rpg-ro7o): welded pitched handrails on both stringers + a level
+        # return over the deck landing.
+        _flight_railing(stair, stair_x[0], stair_x[1], -cd - run, -cd,
+                        0.0, rise, 0.16)
         stair_ob = stair.to_object("LA_MiniMall_Stair", mats)
 
     # ---- walkway + parking lot ---------------------------------------------
