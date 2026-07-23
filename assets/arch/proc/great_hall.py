@@ -574,6 +574,102 @@ def _dais_banner(col, name, length, wall_t, width):
     return o
 
 
+# --- stained glass (translucency demo): simple colored, segmented glazing ---
+_GLASS_COLORS = [
+    ("gh_glass_red",    (0.55, 0.05, 0.05)),
+    ("gh_glass_blue",   (0.06, 0.10, 0.52)),
+    ("gh_glass_gold",   (0.80, 0.58, 0.10)),
+    ("gh_glass_green",  (0.06, 0.38, 0.10)),
+    ("gh_glass_violet", (0.34, 0.08, 0.44)),
+    ("gh_glass_pale",   (0.62, 0.68, 0.72)),
+]
+
+
+def _glass_material(name, rgb, opacity=0.35):
+    """Flat-tint glass material: the exporter emits solid materials as tint +
+    roughness with no maps, and ``ferrum_opacity`` marks translucency (feeds
+    the CSM translucency mask + the bake's transmission channel)."""
+    mat = bpy.data.materials.get(name)
+    if mat is not None:
+        return mat
+    mat = bpy.data.materials.new(name)
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    if bsdf is not None:
+        bsdf.inputs["Base Color"].default_value = (*rgb, 1.0)
+        bsdf.inputs["Roughness"].default_value = 0.12
+    mat["ferrum_opacity"] = opacity
+    return mat
+
+
+def build_stained_glass(name, opening_width=1.15, sill=2.0, jamb_h=2.5,
+                        wall_t=0.5, cols=3, rows=4, arcs=5, thickness=0.03,
+                        collection=None):
+    """Segmented stained glazing for one arched light: a cols x rows grid of
+    tinted panes over the rectangular aperture plus an arcs-wedge ring in the
+    round head, every pane a thin box carrying one of the ``_GLASS_COLORS``
+    glass materials (flat tint + ferrum_opacity translucency); a dark lead
+    boss closes the wedge fan's hub. Origin matches the doorway panel (opening
+    centre on the floor); the sheet sits just behind the NARROW exterior
+    aperture so every edge buries inside the splayed reveal. Returns the new
+    object (linked into @p collection)."""
+    import bmesh
+    me = bpy.data.meshes.new(name)
+    ob = bpy.data.objects.new(name, me)
+    (collection if collection is not None
+     else bpy.context.scene.collection).objects.link(ob)
+    mats = [_glass_material(n, c) for (n, c) in _GLASS_COLORS]
+    mats.append(_glass_material("gh_lead_came", (0.07, 0.07, 0.08),
+                                opacity=1.0))
+    for m in mats:
+        me.materials.append(m)
+
+    bm = bmesh.new()
+    y0 = -(wall_t * 0.5) + 0.05     # just behind the exterior (voussoir) face
+    over = 0.05                     # bury margin into the splayed reveal
+    hw = opening_width * 0.5 + over
+    z0, z1 = sill - over, sill + jamb_h        # z1 = spring line
+
+    def pane(x0, x1, za, zb, mi):
+        vs = []
+        for y_ in (y0 - thickness * 0.5, y0 + thickness * 0.5):
+            for (x_, z_) in ((x0, za), (x1, za), (x1, zb), (x0, zb)):
+                vs.append(bm.verts.new((x_, y_, z_)))
+        for f in ((0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
+                  (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)):
+            fc = bm.faces.new([vs[k] for k in f])
+            fc.material_index = mi
+
+    for i in range(cols):
+        for j in range(rows):
+            x0 = -hw + 2.0 * hw * i / cols
+            x1 = -hw + 2.0 * hw * (i + 1) / cols
+            za = z0 + (z1 - z0) * j / rows
+            zb = z0 + (z1 - z0) * (j + 1) / rows
+            pane(x0, x1, za, zb, (i * 5 + j * 3 + (i + j) // 2) % 6)
+
+    # round head: a ring of wedge panes (chorded quads) about the spring point
+    r0, rr = 0.16, opening_width * 0.5 + over
+    for k in range(arcs):
+        a0 = math.pi * k / arcs
+        a1 = math.pi * (k + 1) / arcs
+        vs = []
+        for y_ in (y0 - thickness * 0.5, y0 + thickness * 0.5):
+            for (r_, a_) in ((r0, a0), (rr, a0), (rr, a1), (r0, a1)):
+                vs.append(bm.verts.new((r_ * math.cos(a_), y_,
+                                        z1 + r_ * math.sin(a_))))
+        for f in ((0, 1, 2, 3), (7, 6, 5, 4), (0, 4, 5, 1),
+                  (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 4, 0)):
+            fc = bm.faces.new([vs[k2] for k2 in f])
+            fc.material_index = (k * 7 + 2) % 6
+    # lead boss over the fan hub (opaque -- closes the ring's centre)
+    pane(-r0 - 0.02, r0 + 0.02, z1 - 0.03, z1 + r0 + 0.02, 6)
+
+    bm.to_mesh(me)
+    bm.free()
+    return ob
+
+
 def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
                      wall_t=0.5, roof_rise=3.6,
                      lamp_niches=True, niche_above_dais=2.4384, niche_spacing=2.6,
@@ -618,6 +714,11 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
             reveal_bevel=0.025, voussoir_trim=True, trim_width=0.12,
             trim_extrude=0.05, masonry_uv=True, collection=col)
 
+    def glazing(nm):
+        # simple colored, segmented stained glass in every light (translucency)
+        return build_stained_glass(nm, opening_width=1.15, sill=2.0,
+                                   jamb_h=2.5, wall_t=wall_t, collection=col)
+
     # The fireplace occupies the last north bay (by the dais) -- skip that window
     # so they don't intersect.
     fp_bay = nbay - 1
@@ -627,9 +728,15 @@ def build_great_hall(name="great_hall", nbay=5, bay=3.6, width=8.0, wall_h=6.5,
             n = window(f"{name}_win_N_{i}")
             n.location = ((i + 0.5) * bay, half, 0.0)
             n.rotation_euler = (0, 0, math.pi)      # voussoir face -> +Y (exterior)
+            gn = glazing(f"{name}_glass_N_{i}")
+            gn.location = n.location
+            gn.rotation_euler = n.rotation_euler
         s = window(f"{name}_win_S_{i}")
         s.location = ((i + 0.5) * bay, -half, 0.0)
         s.rotation_euler = (0, 0, 0.0)              # voussoir face -> -Y (exterior)
+        gs = glazing(f"{name}_glass_S_{i}")
+        gs.location = s.location
+        gs.rotation_euler = s.rotation_euler
     # solid wall behind the fireplace bay (a plain box on the same bay grid /
     # thickness as the window panels), so the flue has a wall to back onto.
     _box(col, f"{name}_wall_N_{fp_bay}", fp_wx, half, wall_h / 2.0,
