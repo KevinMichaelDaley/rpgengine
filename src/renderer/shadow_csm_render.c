@@ -73,6 +73,55 @@ static void csm_begin_pass(shadow_csm_t *csm, uint32_t res, int mode)
     shader_uniform_set_int(&csm->cache, &csm->shader, "u_mode", mode);
 }
 
+/* MSAA scratch for the one-shot static bake: a multisampled R32F color RBO +
+ * depth RBO pair sized to one cascade. Rendered into per cascade, then
+ * blit-resolved into the atlas layer. Returns 0 on any failure (caller falls
+ * back to the single-sampled path). Out params receive the two RBO names. */
+static uint32_t csm_msaa_scratch_create(shadow_csm_t *csm, uint32_t res,
+                                        uint32_t samples, uint32_t color_fmt,
+                                        uint32_t *out_color_rb,
+                                        uint32_t *out_depth_rb)
+{
+    /* Sample-count ladder: a cascade-sized multisampled pair is GBs at high
+     * res, so on OUT_OF_MEMORY / incomplete FBO halve the samples and retry
+     * (8 -> 4 -> 2) before giving up. */
+    for (uint32_t s = samples; s >= 2u; s >>= 1) {
+        uint32_t fbo = 0, color_rb = 0, depth_rb = 0;
+        while (csm->glGetError() != 0u) { } /* drain stale errors. */
+        csm->glGenFramebuffers(1, &fbo);
+        csm->glGenRenderbuffers(1, &color_rb);
+        csm->glGenRenderbuffers(1, &depth_rb);
+        csm->glBindRenderbuffer(GL_RENDERBUFFER, color_rb);
+        csm->glRenderbufferStorageMultisample(GL_RENDERBUFFER, (int32_t)s,
+                                              color_fmt, (int32_t)res,
+                                              (int32_t)res);
+        csm->glBindRenderbuffer(GL_RENDERBUFFER, depth_rb);
+        csm->glRenderbufferStorageMultisample(GL_RENDERBUFFER, (int32_t)s,
+                                              GL_DEPTH_COMPONENT24,
+                                              (int32_t)res, (int32_t)res);
+        csm->glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        csm->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                       GL_RENDERBUFFER, color_rb);
+        csm->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                       GL_RENDERBUFFER, depth_rb);
+        if (csm->glGetError() == 0u &&
+            csm->glCheckFramebufferStatus(GL_FRAMEBUFFER) ==
+                GL_FRAMEBUFFER_COMPLETE) {
+            if (getenv("CSM_DEBUG"))
+                fprintf(stderr, "csm bake: MSAA scratch %ux%u @ %ux\n",
+                        res, res, s);
+            *out_color_rb = color_rb;
+            *out_depth_rb = depth_rb;
+            return fbo;
+        }
+        csm->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        csm->glDeleteFramebuffers(1, &fbo);
+        csm->glDeleteRenderbuffers(1, &color_rb);
+        csm->glDeleteRenderbuffers(1, &depth_rb);
+    }
+    return 0;
+}
+
 void shadow_csm_bake_static(shadow_csm_t *csm, const render_scene_t *scene)
 {
     if (csm == NULL || scene == NULL || csm->static_valid || csm->static_base < 0)
@@ -81,12 +130,23 @@ void shadow_csm_bake_static(shadow_csm_t *csm, const render_scene_t *scene)
     if (to > scene->count)
         to = scene->count;
 
+    /* Full-MSAA bake: render each cascade into a multisampled scratch target
+     * and blit-resolve into its atlas layer; the resolve averages the caster
+     * coverage per texel, antialiasing shadow silhouettes. One-shot cost. */
+    uint32_t ms_fbo = 0, ms_color_rb = 0, ms_depth_rb = 0;
+    if (csm->msaa > 1u)
+        ms_fbo = csm_msaa_scratch_create(csm, csm->static_res, csm->msaa,
+                                         GL_R32F, &ms_color_rb, &ms_depth_rb);
+
     float far_depth[4] = { 1.0f, 1.0f, 1.0f, 1.0f }; /* empty texel = farthest. */
     csm_begin_pass(csm, csm->static_res, 0);
     for (uint32_t c = 0; c < csm->cascades; ++c) {
-        /* Attach this cascade's slice of the resource-managed shadow atlas. */
-        shadow_atlas_bind_layer(&csm->static_atlas,
-                                (uint32_t)csm->static_base + c);
+        if (ms_fbo != 0)
+            csm->glBindFramebuffer(GL_FRAMEBUFFER, ms_fbo);
+        else
+            /* Attach this cascade's slice of the resource-managed atlas. */
+            shadow_atlas_bind_layer(&csm->static_atlas,
+                                    (uint32_t)csm->static_base + c);
         csm->glClearBufferfv(GL_COLOR, 0, far_depth);
         csm->glClear(GL_DEPTH_BUFFER_BIT);
         shader_uniform_set_mat4(&csm->cache, &csm->shader, "u_projection",
@@ -94,6 +154,21 @@ void shadow_csm_bake_static(shadow_csm_t *csm, const render_scene_t *scene)
         shader_uniform_set_vec3(&csm->cache, &csm->shader, "u_eye", csm->eye[c]);
         shader_uniform_set_float(&csm->cache, &csm->shader, "u_far", csm->far_plane[c]);
         csm_draw_items(csm, scene, 0u, to, csm->view_proj[c].m, (int)c);
+        if (ms_fbo != 0) {
+            /* Resolve: atlas layer as the draw target, scratch as read. The
+             * final shadow_atlas_bind_layer leaves the atlas FBO bound on
+             * GL_FRAMEBUFFER so the CSM_DUMP ReadPixels below still works. */
+            shadow_atlas_bind_layer(&csm->static_atlas,
+                                    (uint32_t)csm->static_base + c);
+            csm->glBindFramebuffer(GL_READ_FRAMEBUFFER, ms_fbo);
+            csm->glBlitFramebuffer(0, 0, (int32_t)csm->static_res,
+                                   (int32_t)csm->static_res, 0, 0,
+                                   (int32_t)csm->static_res,
+                                   (int32_t)csm->static_res,
+                                   GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            shadow_atlas_bind_layer(&csm->static_atlas,
+                                    (uint32_t)csm->static_base + c);
+        }
 
         /* CSM_DUMP: read this cascade's linear-depth map back and write it as a
          * grayscale PPM so the caster depth per cascade can be inspected. */
@@ -119,6 +194,11 @@ void shadow_csm_bake_static(shadow_csm_t *csm, const render_scene_t *scene)
                 free(buf);
             }
         }
+    }
+    if (ms_fbo != 0) {
+        csm->glDeleteFramebuffers(1, &ms_fbo);
+        csm->glDeleteRenderbuffers(1, &ms_color_rb);
+        csm->glDeleteRenderbuffers(1, &ms_depth_rb);
     }
     csm->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     csm->static_valid = true;

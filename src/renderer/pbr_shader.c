@@ -334,6 +334,7 @@ static const char *const PBR_FS =
      * result: fetch the 2x2 bilinear footprint in one gather, compare each\n"
      * texel, bilinearly weight the four binary results. Each PCF tap becomes a\n"
      * smooth [0,1] coverage instead of a coin flip. */
+    /* One PCF tap: gather 2x2, binary compare per texel, manual bilinear. */
     "float pbr_csm_tap_hw(vec2 tuv, int i, float dref){\n"
     "  vec4 g = textureGather(u_csm_static, vec3(tuv, float(i)));\n"
     "  vec4 c = step(vec4(dref), g);\n"          /* 1 = lit (depth beyond ref). */
@@ -382,7 +383,7 @@ static const char *const PBR_FS =
     /* Cascaded sun shadow: opaque PCSS + translucent glass, MERGED per PCF sample\n"
      * so glass shadows get the same soft penumbra as opaque ones. Returns a vec3\n"
      * visibility (colored, because glass transmission is tinted). */
-    "vec3 pbr_csm_shadow(vec3 fragpos, mat2 rot){\n"
+    "vec3 pbr_csm_shadow(vec3 fragpos, mat2 rot, vec3 N){\n"
     "  if(u_csm_enabled==0) return vec3(1.0);\n"
     "  vec3 vis = vec3(1.0);\n"
     "  float texuv = 1.0 / u_csm_res;\n"                   /* cascade-independent. */
@@ -412,12 +413,18 @@ static const char *const PBR_FS =
     "      if(bcnt < 0.5){ prad = texuv; }\n"   /* no opaque blocker: sharp, still sample glass. */
     "      else {\n"
     "        float dblk = bsum / bcnt;\n"
-    "        float pen = (d - dblk) / max(dblk, 1e-4);\n"     /* scale-invariant ratio. */
-    "        float penM = min(pen * u_csm_soft, 0.6);\n"      /* world metres, capped. */
-    "        prad = clamp(penM * uvPerM, texuv, 12.0*texuv);\n"
+    /* Sun penumbra grows with the blocker->receiver gap in WORLD METRES.\n"
+     * (The classic perspective ratio (d-dblk)/dblk is wrong for an ortho sun\n"
+     * cascade: the virtual eye is the whole cascade span away, the ratio is\n"
+     * ~0 for any gap, and the penumbra permanently collapsed to the floor --\n"
+     * texel staircases on every coarse-cascade terminator.) u_csm_soft reads\n"
+     * as the sun's angular diameter in degrees (real sun ~0.5). */
+    "        float gapM = (d - dblk) * u_csm_far[i];\n"
+    "        float penM = min(gapM * 0.0175 * u_csm_soft, 0.6);\n"  /* capped, metres. */
+    "        prad = clamp(penM * uvPerM, 1.5*texuv, 12.0*texuv);\n"
     "      }\n"
     "    } else {\n"
-    "      prad = clamp(u_csm_soft * uvPerM, texuv, 6.0*texuv);\n"  /* fixed width. */
+    "      prad = clamp(u_csm_soft * uvPerM, 1.5*texuv, 6.0*texuv);\n"  /* fixed width. */
     "    }\n"
     /* PCF: 8 binary opaque taps (per-pixel rotation dithers them), then ONE\n"
      * smooth glass-transmission factor for the cascade (pbr_csm_glass). The old\n"
@@ -426,22 +433,53 @@ static const char *const PBR_FS =
      * every translucency boundary. */
     "    int taps = (u_csm_taps == 16) ? 16 : 8;\n"
     "    float litf = 0.0;\n"
+    "    float wsum = 0.0;\n"
+    /* SLOPE-SCALED per-tap bias: a receiver plane tilted against the light\n"
+     * drops (tan a) metres of depth per metre of light-space offset. The flat\n"
+     * u_dir_bias covers half a texel at best; a tap r texels out on a grazing\n"
+     * floor reads its OWN surface r*texel*tan(a) closer to the light and flips\n"
+     * blocked -- a texel-quantised acne front that no tap weighting can hide\n"
+     * (the jagged terminator). Slack each tap by its own footprint's slope. */
+    "    float ndl = abs(dot(N, normalize(u_sun_dir)));\n"
+    "    float tana = min(sqrt(max(1.0 - ndl*ndl, 0.0)) / max(ndl, 0.1), 4.0);\n"
+    "    float texM = 1.0 / (uvPerM * u_csm_res);\n"      /* metres per texel. */
     /* FIXED disk: with gather-FILTERED taps there is no binary banding left\n"
      * for a per-pixel rotation to hide -- the rotation itself was the last\n"
      * noise source, visible wherever the shadow x glass blend has a gradient\n"
      * (pixel-parity checker at every translucency border, stable in time). */
-    "    for(int s=0;s<taps;++s){\n"
-    "      vec2 tuv = uv + PZ[s]*prad;\n"
-    "      litf += pbr_csm_tap_hw(tuv, i, d - bias);\n"
+    /* DENSE GRID PCF: a sparse Poisson disk sums a few shifted copies of the\n"
+     * (texel-cornered) hard-shadow function, so on a magnified coarse texel\n"
+     * every copy showed as its own scalloped contour -- either banding (fixed\n"
+     * disk) or speckle (rotated disk). A grid with <=1.3-texel spacing keeps\n"
+     * neighbouring copies within one bilinear ramp of each other: the summed\n"
+     * field is smooth, deterministic and noise-free. Gaussian weights keep the\n"
+     * penumbra tangent at both ends (no last-contour step). Penumbra radius is\n"
+     * min(prad, grid reach); the spacing never exceeds 1.3 texels. */
+    "    int gr = (taps == 16) ? 3 : 1;\n"              /* 7x7 or 3x3 grid. */
+    "    float spacing = clamp(prad/float(gr), 0.5*texuv, 0.9*texuv);\n"
+    "    for(int gy=-gr;gy<=gr;++gy)\n"
+    "    for(int gx=-gr;gx<=gr;++gx){\n"
+    "      vec2 off = vec2(float(gx),float(gy))*spacing;\n"
+    "      float rn = dot(vec2(float(gx),float(gy)),vec2(float(gx),float(gy)))\n"
+    "               / float(gr*gr);\n"                  /* 0 centre .. 2 corner. */
+    "      float w = exp(-1.5*rn);\n"
+    "      float slackM = tana * (0.75*texM + length(off)/uvPerM);\n"
+    "      litf += w * pbr_csm_tap_hw(uv + off, i, d - bias - slackM*invfar);\n"
+    "      wsum += w;\n"
     "    }\n"
-    "    vec3 lit = vec3(litf / float(taps)) * pbr_csm_glass(uv, i, d, gbias, prad);\n"
+    /* Debug isolation: 13 = opaque PCF term only, 14 = glass term only. */
+    "    vec3 lit;\n"
+    "    if(u_debug_mode==13) lit = vec3(litf / wsum);\n"
+    "    else if(u_debug_mode==14) lit = pbr_csm_glass(uv, i, d, gbias, prad);\n"
+    "    else lit = vec3(litf / wsum) * pbr_csm_glass(uv, i, d, gbias, prad);\n"
     /* Cascades TILE the light frustum; at a tile seam the guard band puts a\n"
      * fragment in two tiles, both holding the same border casters. Union the\n"
      * occlusion (most-occluded wins, per channel) so the seam is seamless. */
     "    vis = min(vis, lit);\n"
     "  }\n"
     /* Dynamic opaque casters (scalar PCF), merged per channel. */
-    "  vis = min(vis, vec3(pbr_dyn_shadow(fragpos)));\n"
+    "  if(u_debug_mode!=13 && u_debug_mode!=14)\n"
+    "    vis = min(vis, vec3(pbr_dyn_shadow(fragpos)));\n"
     /* Dynamic translucent casters: single ortho pair (moving glass is rare, so no\n"
      * PCF), same depth gate as the static path. */
     "  if(u_csm_mask_on==1){\n"
@@ -791,7 +829,7 @@ static const char *const PBR_FS =
     /* Perf probe: 9 = material fetches only (no lighting), isolates fill/bandwidth. */
     "  if(u_debug_mode==9){ frag=vec4(albedo*ao,1.0); return; }\n"
     /* Directional sun. */
-    "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color * pbr_csm_shadow(v_world_pos, krot);\n"
+    "  vec3 direct = pbr_light(N, V, normalize(u_sun_dir), albedo, rough, metal, F0) * u_sun_color * pbr_csm_shadow(v_world_pos, krot, N);\n"
     "  float dbg_cubesh = 1.0;\n"   /* raw cube-shadow of the nearest shadowed clustered light. */
     "  if(u_clustered==1){\n"
     /* Forward+: shade only this cluster's lights. */
@@ -830,7 +868,7 @@ static const char *const PBR_FS =
     "  if(u_debug_mode==4){ frag=vec4(0.5+0.5*N,1.0); return; }\n"
     /* 5 = raw CSM shadow factor (white=lit, black=occluded). 6 = finest cascade\n"
      * whose box contains the fragment (red=0, green=1, blue=2+). */
-    "  if(u_debug_mode==5){ vec3 sh=pbr_csm_shadow(v_world_pos, krot); frag=vec4(sh,1.0); return; }\n"
+    "  if(u_debug_mode==5||u_debug_mode==13||u_debug_mode==14){ vec3 sh=pbr_csm_shadow(v_world_pos, krot, N); frag=vec4(sh,1.0); return; }\n"
     "  if(u_debug_mode==6){ int ci=-1; for(int i=0;i<u_csm_count;++i){ vec4 lc=u_csm_vp[i]*vec4(v_world_pos,1.0); vec3 nd=lc.xyz/lc.w; if(all(lessThanEqual(abs(nd),vec3(1.0)))){ci=i;break;} }\n"
     "    vec3 cc=ci<0?vec3(0.1):(ci==0?vec3(1,0,0):(ci==1?vec3(0,1,0):vec3(0,0,1))); frag=vec4(cc,1.0); return; }\n"
     "  if(u_debug_mode==5){ frag=vec4(0.5+0.5*normalize(v_tangent),1.0); return; }\n"

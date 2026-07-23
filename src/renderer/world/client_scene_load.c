@@ -649,6 +649,8 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     }
     cfg.has_static_weights = 1; cfg.static_baked_w = rc.static_baked_w; cfg.static_dyn_w = rc.static_dyn_w;
     cfg.forward.dir_pcf_taps = rc.dir_pcf_taps;
+    cfg.forward.dir_msaa = rc.dir_msaa;
+    cfg.forward.dir_mask_res = rc.dir_mask_res;
     cfg.has_spec_gain = 1; cfg.spec_gain = rc.spec_gain;
 
     /* Fold the baked lightmap into the probes (built above) + sky-openness AO,

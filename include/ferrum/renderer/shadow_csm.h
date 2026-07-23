@@ -70,6 +70,13 @@ typedef struct shadow_csm_config {
                                      *   sample (0 = crisp; ~2-3 = soft). */
     bool               pcss;        /**< true = variable-width PCSS penumbra;
                                      *   false (default) = cheaper fixed-width PCF. */
+    uint32_t           msaa;        /**< MSAA sample count for the STATIC cascade
+                                     *   and translucency-mask bakes (0/1 = off;
+                                     *   clamped to 2/4/8). Bake-time only cost:
+                                     *   rendered into multisampled scratch RBOs
+                                     *   then blit-resolved into the atlases. */
+    uint32_t           mask_res;    /**< per-cascade translucency-mask resolution
+                                     *   (0 = follow static_res). */
 } shadow_csm_config_t;
 
 /** Shadow-map state: the static EVSM2 cascade array + a single low-res
@@ -84,6 +91,9 @@ typedef struct shadow_csm {
     float    max_distance; /**< far-split cap (0 = camera far). */
     float    softness;     /**< sun-penumbra EVSM mip LOD bias. */
     bool     pcss;         /**< variable-width PCSS (true) vs fixed-width PCF (false). */
+    uint32_t msaa;         /**< static-bake MSAA samples (0/1 = single-sampled). */
+    uint32_t mask_res;     /**< translucency-mask resolution (>= 1; may differ
+                            *   from static_res when config->mask_res is set). */
 
     gpu_registry_t registry;      /**< tracks shadow depth targets as GPU resources. */
     shadow_atlas_t static_atlas;  /**< high-res EVSM2 cascade array (slotmap-managed). */
@@ -146,7 +156,11 @@ typedef struct shadow_csm {
     void (*glDeleteRenderbuffers)(int32_t, const uint32_t *);
     void (*glBindRenderbuffer)(uint32_t, uint32_t);
     void (*glRenderbufferStorage)(uint32_t, uint32_t, int32_t, int32_t);
+    void (*glRenderbufferStorageMultisample)(uint32_t, int32_t, uint32_t, int32_t, int32_t);
     void (*glFramebufferRenderbuffer)(uint32_t, uint32_t, uint32_t, uint32_t);
+    void (*glBlitFramebuffer)(int32_t, int32_t, int32_t, int32_t, int32_t,
+                              int32_t, int32_t, int32_t, uint32_t, uint32_t);
+    void (*glReadBuffer)(uint32_t);
     void (*glGenTextures)(int32_t, uint32_t *);
     void (*glDeleteTextures)(int32_t, const uint32_t *);
     void (*glBindTexture)(uint32_t, uint32_t);

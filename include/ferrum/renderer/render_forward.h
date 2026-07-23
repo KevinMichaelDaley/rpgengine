@@ -76,6 +76,10 @@ typedef struct render_forward_config {
     float              dir_lambda;      /**< cascade split blend (0=uniform,1=log). */
     float              dir_bias;        /**< directional distance-compare bias. */
     int                dir_pcf_taps;    /**< CSM PCF taps (8 or 16; 0 -> 8). */
+    uint32_t           dir_msaa;        /**< static cascade/mask bake MSAA samples
+                                         *   (0/1 = off; clamped to 2/4/8). */
+    uint32_t           dir_mask_res;    /**< translucency-mask resolution
+                                         *   (0 = follow dir_static_res). */
     float              dir_max_distance;/**< cap the shadowed range (0 = camera far). */
     float              dir_softness;    /**< sun-penumbra EVSM mip LOD (0 = crisp,
                                          *   ~2-3 = soft). */

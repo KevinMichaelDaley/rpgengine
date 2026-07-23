@@ -99,6 +99,9 @@ void render_config_defaults(render_config_t *rc)
     rc->shadow_distance = 0.0f;         /* unlimited. */
     rc->shadow_static_cache = 0;        /* re-render every frame, as today. */
     rc->dir_pcf_taps = 8;               /* CSM 8-tap PCF, as today. */
+    rc->dir_msaa = 8;                   /* full-MSAA static cascade + mask bakes:
+                                         * one-shot cost, antialiased silhouettes. */
+    rc->dir_mask_res = 0;               /* translucency mask follows dir_static_res. */
     rc->shadow_pcf_taps = 8;            /* point-shadow 8-tap, as today. */
     rc->dir_dynamic_interval = 1;       /* dynamic CSM every frame. */
 

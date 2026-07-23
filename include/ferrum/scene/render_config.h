@@ -138,6 +138,11 @@ typedef struct render_config {
     int      shadow_static_cache;   /**< 1 = re-render a cube-shadow slot only when its
                                      *   light or an intersecting dynamic caster moved. */
     int      dir_pcf_taps;          /**< CSM PCF taps per cascade: 8/4/1 (1 = hard). */
+    uint32_t dir_msaa;              /**< static cascade + translucency-mask bake
+                                     *   MSAA samples (0/1 = off; 2/4/8).
+                                     *   Default 8: the bakes are one-shot. */
+    uint32_t dir_mask_res;          /**< translucency-mask per-cascade resolution
+                                     *   (0 = follow dir_static_res). */
     int      shadow_pcf_taps;       /**< point-shadow cube PCF taps: 8/4/1 (1 = hard). */
     int      dir_dynamic_interval;  /**< dynamic CSM map refresh every N frames (1 = every). */
 

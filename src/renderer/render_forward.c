@@ -393,6 +393,8 @@ bool render_forward_init(render_forward_t *fwd, const render_forward_config_t *c
             .max_distance = cfg->dir_max_distance,
             .softness = cfg->dir_softness,
             .pcss = cfg->dir_pcss,
+            .msaa = cfg->dir_msaa,
+            .mask_res = cfg->dir_mask_res,
         };
         if (!shadow_csm_init(&fwd->csm, &sc)) {
             render_forward_destroy(fwd);

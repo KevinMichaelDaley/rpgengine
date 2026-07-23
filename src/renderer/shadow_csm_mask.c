@@ -20,6 +20,8 @@
  */
 #include "ferrum/renderer/shadow_csm.h"
 
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "ferrum/renderer/cull/frustum_cull.h"
@@ -164,10 +166,15 @@ bool shadow_csm_mask_init(shadow_csm_t *csm, const gl_loader_t *loader)
         return false;
     shader_uniform_cache_init(&csm->mask_cache, &csm->mask_shader);
 
+    /* The mask may run at its own (typically higher) resolution: glass
+     * silhouettes are what the eye reads at translucency boundaries, so extra
+     * texels there pay off more than in the opaque maps. Receivers sample by
+     * normalized uv, so no receiver-side changes are needed. */
+    uint32_t mres = csm->mask_res ? csm->mask_res : csm->static_res;
     shadow_atlas_config_t color_cfg = {
         .loader = loader,
         .registry = &csm->registry,
-        .resolution = csm->static_res,
+        .resolution = mres,
         .layers = csm->cascades,
         .internal_format = GL_RGBA16F,
         /* BILINEAR: with the receiver's soft depth gate (pbr_csm_glass) the
@@ -193,8 +200,7 @@ bool shadow_csm_mask_init(shadow_csm_t *csm, const gl_loader_t *loader)
     csm->glGenRenderbuffers(1, &csm->mask_depth_rb);
     csm->glBindRenderbuffer(GL_RENDERBUFFER, csm->mask_depth_rb);
     csm->glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24,
-                               (int32_t)csm->static_res,
-                               (int32_t)csm->static_res);
+                               (int32_t)mres, (int32_t)mres);
     csm->dyn_mask_color = mask_make_2d(csm, GL_RGBA16F, GL_RGBA,
                                        csm->dynamic_res,
                                        (int32_t)GL_LINEAR);
@@ -211,6 +217,42 @@ bool shadow_csm_mask_init(shadow_csm_t *csm, const gl_loader_t *loader)
     return true;
 }
 
+/* One multisampled RBO of @p samples at @p res x @p res. */
+static uint32_t mask_ms_rb(shadow_csm_t *csm, uint32_t internal_format,
+                           uint32_t res, uint32_t samples)
+{
+    uint32_t rb = 0;
+    csm->glGenRenderbuffers(1, &rb);
+    csm->glBindRenderbuffer(GL_RENDERBUFFER, rb);
+    csm->glRenderbufferStorageMultisample(GL_RENDERBUFFER, (int32_t)samples,
+                                          internal_format, (int32_t)res,
+                                          (int32_t)res);
+    return rb;
+}
+
+/* Blit-resolve one multisampled scratch attachment into one atlas layer.
+ * The mask FBO doubles as the single-attachment draw target: the destination
+ * layer goes on ATTACHMENT0 and DrawBuffers is narrowed to it. */
+static void mask_ms_resolve(shadow_csm_t *csm, uint32_t ms_fbo,
+                            uint32_t src_attachment, uint32_t dst_tex,
+                            int32_t dst_layer, uint32_t res)
+{
+    static const uint32_t one_buf[1] = { GL_COLOR_ATTACHMENT0 };
+    csm->glBindFramebuffer(GL_DRAW_FRAMEBUFFER, csm->mask_fbo);
+    csm->glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                   dst_tex, 0, dst_layer);
+    /* Drop the stale ATTACHMENT1 layer so mixed formats can't fail
+     * completeness while DrawBuffers is narrowed to attachment 0. */
+    csm->glFramebufferTextureLayer(GL_DRAW_FRAMEBUFFER,
+                                   GL_COLOR_ATTACHMENT0 + 1u, 0, 0, 0);
+    csm->glDrawBuffers(1, one_buf);
+    csm->glBindFramebuffer(GL_READ_FRAMEBUFFER, ms_fbo);
+    csm->glReadBuffer(src_attachment);
+    csm->glBlitFramebuffer(0, 0, (int32_t)res, (int32_t)res, 0, 0,
+                           (int32_t)res, (int32_t)res, GL_COLOR_BUFFER_BIT,
+                           GL_NEAREST);
+}
+
 void shadow_csm_mask_bake_static(shadow_csm_t *csm,
                                  const render_scene_t *scene)
 {
@@ -220,16 +262,86 @@ void shadow_csm_mask_bake_static(shadow_csm_t *csm,
     uint32_t to = scene->dynamic_from;
     if (to > scene->count)
         to = scene->count;
+    uint32_t mres = csm->mask_res ? csm->mask_res : csm->static_res;
+
+    /* Full-MSAA bake (matching the opaque cascade bake): draw the translucent
+     * casters into a multisampled MRT scratch, then resolve tint+coverage and
+     * distance separately into their atlas layers. The averaged coverage along
+     * glass silhouettes is what removes the jagged translucency edges. */
+    uint32_t ms_fbo = 0, ms_color_rb = 0, ms_dist_rb = 0, ms_depth_rb = 0;
+    /* Sample-count ladder (as in the opaque cascade bake): the MRT scratch is
+     * GBs at high res, so on OUT_OF_MEMORY / incomplete FBO halve the samples
+     * and retry before falling back to the single-sampled path. */
+    for (uint32_t s = csm->msaa; ms_fbo == 0 && s >= 2u; s >>= 1) {
+        static const uint32_t bufs[2] = { GL_COLOR_ATTACHMENT0,
+                                          GL_COLOR_ATTACHMENT0 + 1u };
+        while (csm->glGetError() != 0u) { } /* drain stale errors. */
+        ms_color_rb = mask_ms_rb(csm, GL_RGBA16F, mres, s);
+        ms_dist_rb = mask_ms_rb(csm, GL_R32F, mres, s);
+        ms_depth_rb = mask_ms_rb(csm, GL_DEPTH_COMPONENT24, mres, s);
+        csm->glGenFramebuffers(1, &ms_fbo);
+        csm->glBindFramebuffer(GL_FRAMEBUFFER, ms_fbo);
+        csm->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                       GL_RENDERBUFFER, ms_color_rb);
+        csm->glFramebufferRenderbuffer(GL_FRAMEBUFFER,
+                                       GL_COLOR_ATTACHMENT0 + 1u,
+                                       GL_RENDERBUFFER, ms_dist_rb);
+        csm->glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT,
+                                       GL_RENDERBUFFER, ms_depth_rb);
+        csm->glDrawBuffers(2, bufs);
+        if (getenv("CSM_DEBUG") &&
+            csm->glCheckFramebufferStatus(GL_FRAMEBUFFER) ==
+                GL_FRAMEBUFFER_COMPLETE)
+            fprintf(stderr, "csm mask bake: MSAA scratch %ux%u @ %ux\n", mres,
+                    mres, s);
+        if (csm->glGetError() != 0u ||
+            csm->glCheckFramebufferStatus(GL_FRAMEBUFFER) !=
+                GL_FRAMEBUFFER_COMPLETE) {
+            csm->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            csm->glDeleteFramebuffers(1, &ms_fbo);
+            csm->glDeleteRenderbuffers(1, &ms_color_rb);
+            csm->glDeleteRenderbuffers(1, &ms_dist_rb);
+            csm->glDeleteRenderbuffers(1, &ms_depth_rb);
+            ms_fbo = 0; /* halve and retry (or fall back single-sampled). */
+        }
+    }
+
     mat4_t identity = mat4_identity();
     shader_program_bind(&csm->mask_shader);
     shader_uniform_set_mat4(&csm->mask_cache, &csm->mask_shader, "u_view",
                             identity.m, 0);
     for (uint32_t c = 0; c < csm->cascades; ++c) {
-        mask_begin_target(csm, csm->mask_color_atlas.texture,
-                          csm->mask_color_base + (int32_t)c,
-                          csm->mask_depth_atlas.texture,
-                          csm->mask_depth_base + (int32_t)c,
-                          csm->mask_depth_rb, csm->static_res);
+        if (ms_fbo != 0) {
+            /* Scratch target: same pass state + clears as mask_begin_target,
+             * but the attachments are the persistent multisampled RBOs. */
+            static const uint32_t bufs[2] = { GL_COLOR_ATTACHMENT0,
+                                              GL_COLOR_ATTACHMENT0 + 1u };
+            static const float clear_color[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+            /* Distance clears to 0 (NOT the usual far=1): the resolve blit
+             * AVERAGES samples, so a silhouette texel mixes the glass distance
+             * with the clear. Mixing toward far would push the stored distance
+             * beyond receivers just behind the glass, closing the receiver's
+             * depth gate and eroding the antialiased edge; mixing toward 0
+             * keeps the gate open so the resolved partial coverage fades the
+             * glass shadow out smoothly. Empty texels are harmless at 0: every
+             * consumer gates on coverage first. */
+            static const float clear_near[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+            csm->glBindFramebuffer(GL_FRAMEBUFFER, ms_fbo);
+            csm->glDrawBuffers(2, bufs);
+            csm->glViewport(0, 0, (int32_t)mres, (int32_t)mres);
+            csm->glDisable(GL_CULL_FACE);
+            csm->glEnable(GL_DEPTH_TEST);
+            csm->glDepthFunc(GL_LESS);
+            csm->glClearBufferfv(GL_COLOR, 0, clear_color);
+            csm->glClearBufferfv(GL_COLOR, 1, clear_near);
+            csm->glClear(GL_DEPTH_BUFFER_BIT);
+        } else {
+            mask_begin_target(csm, csm->mask_color_atlas.texture,
+                              csm->mask_color_base + (int32_t)c,
+                              csm->mask_depth_atlas.texture,
+                              csm->mask_depth_base + (int32_t)c,
+                              csm->mask_depth_rb, mres);
+        }
         shader_uniform_set_mat4(&csm->mask_cache, &csm->mask_shader,
                                 "u_projection", csm->view_proj[c].m, 0);
         shader_uniform_set_vec3(&csm->mask_cache, &csm->mask_shader, "u_eye",
@@ -237,6 +349,20 @@ void shadow_csm_mask_bake_static(shadow_csm_t *csm,
         shader_uniform_set_float(&csm->mask_cache, &csm->mask_shader, "u_far",
                                  csm->far_plane[c]);
         mask_draw_items(csm, scene, 0u, to, csm->view_proj[c].m, (int)c);
+        if (ms_fbo != 0) {
+            mask_ms_resolve(csm, ms_fbo, GL_COLOR_ATTACHMENT0,
+                            csm->mask_color_atlas.texture,
+                            csm->mask_color_base + (int32_t)c, mres);
+            mask_ms_resolve(csm, ms_fbo, GL_COLOR_ATTACHMENT0 + 1u,
+                            csm->mask_depth_atlas.texture,
+                            csm->mask_depth_base + (int32_t)c, mres);
+        }
+    }
+    if (ms_fbo != 0) {
+        csm->glDeleteFramebuffers(1, &ms_fbo);
+        csm->glDeleteRenderbuffers(1, &ms_color_rb);
+        csm->glDeleteRenderbuffers(1, &ms_dist_rb);
+        csm->glDeleteRenderbuffers(1, &ms_depth_rb);
     }
     csm->glBindFramebuffer(GL_FRAMEBUFFER, 0);
     csm->mask_static_valid = true;

@@ -135,6 +135,8 @@ bool render_config_parse(const char *json, size_t len, struct arena *arena,
     out->shadow_distance        = sd_field_num(r, "shadow_distance",      out->shadow_distance);
     out->shadow_static_cache    = rc_field_i(r, "shadow_static_cache",    out->shadow_static_cache);
     out->dir_pcf_taps           = rc_field_i(r, "dir_pcf_taps",           out->dir_pcf_taps);
+    out->dir_msaa               = rc_field_u(r, "dir_msaa",               out->dir_msaa);
+    out->dir_mask_res           = rc_field_u(r, "dir_mask_res",           out->dir_mask_res);
     out->shadow_pcf_taps        = rc_field_i(r, "shadow_pcf_taps",        out->shadow_pcf_taps);
     out->dir_dynamic_interval   = rc_field_i(r, "dir_dynamic_interval",   out->dir_dynamic_interval);
 

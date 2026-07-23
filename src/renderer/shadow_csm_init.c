@@ -76,6 +76,18 @@ bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config)
     csm->max_distance = config->max_distance;
     csm->softness = config->softness;
     csm->pcss = config->pcss;
+    /* Static-bake MSAA: clamp to the sample counts every GL3.3 part supports.
+     * 0/1 = single-sampled (no scratch targets, no resolve blit). */
+    csm->msaa = config->msaa;
+    if (csm->msaa <= 1u)
+        csm->msaa = 0u;
+    else if (csm->msaa < 4u)
+        csm->msaa = 2u;
+    else if (csm->msaa < 8u)
+        csm->msaa = 4u;
+    else
+        csm->msaa = 8u;
+    csm->mask_res = config->mask_res ? config->mask_res : config->static_res;
 
     if (shader_program_create(&csm->shader, loader, SC_VS, SC_FS, NULL, 0) !=
         SHADER_PROGRAM_OK)
@@ -90,7 +102,10 @@ bool shadow_csm_init(shadow_csm_t *csm, const shadow_csm_config_t *config)
     SC_LOAD(csm->glDeleteRenderbuffers, "glDeleteRenderbuffers");
     SC_LOAD(csm->glBindRenderbuffer, "glBindRenderbuffer");
     SC_LOAD(csm->glRenderbufferStorage, "glRenderbufferStorage");
+    SC_LOAD(csm->glRenderbufferStorageMultisample, "glRenderbufferStorageMultisample");
     SC_LOAD(csm->glFramebufferRenderbuffer, "glFramebufferRenderbuffer");
+    SC_LOAD(csm->glBlitFramebuffer, "glBlitFramebuffer");
+    SC_LOAD(csm->glReadBuffer, "glReadBuffer");
     SC_LOAD(csm->glGenTextures, "glGenTextures");
     SC_LOAD(csm->glDeleteTextures, "glDeleteTextures");
     SC_LOAD(csm->glBindTexture, "glBindTexture");
