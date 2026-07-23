@@ -1,6 +1,6 @@
 ---
 id: rpg-bpiz
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-23T09:22:49Z
