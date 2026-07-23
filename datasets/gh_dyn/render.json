@@ -9,6 +9,7 @@
   "gi_samples": 2048,
   "gi_bounce": 0.45,
   "gi_stat_scale": 0.3,
+  "gi_dyn_gain": 8.0,
   "gi_update_interval": 2,
   "gi_n_probe_groups": 1,
   "gi_smooth": 0.25,
