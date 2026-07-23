@@ -1044,11 +1044,17 @@ def build_minimall(p, rng):
     # (plus a right pier on the last) so adjacent dressings never overlap.
     if p.get("storefront_detail", True):
         open_idx = [i for i, f9 in enumerate(fates_m) if f9 == 'open']
+        sf_styles = ('checker', 'tile', 'stucco', 'panel')
         for i in open_idx:
             (_b0, _b1, o0, o1) = bays_m[i]
             bh9 = 0.9 if high_bk_m[i] else 0.62
+            style9 = p.get("storefront_style", 'mixed')
+            if style9 == 'mixed':
+                style9 = sf_styles[rng.randrange(len(sf_styles))]
+            glz9 = 'plate' if rng.random() < 0.3 else 'mullioned'
             emit_storefront_bay(shell, o0, o1, 0.0, doors_m[i], Z_SF,
-                                bulkhead=bh9,
+                                bulkhead=bh9, bulkhead_style=style9,
+                                glazing=glz9,
                                 piers=(True, i == open_idx[-1]))
     # court-arm storefronts + their outer/south walls.
     for xa in xarms:
@@ -2370,7 +2376,10 @@ SPEC = [
     params.MODE_PARAM,
     dict(name="tenants", type='INT', default=5, min=2, max=20),
     dict(name="storefront_detail", type='BOOL', default=True,
-         desc="Checkerboard-tile storefront dressing on open tenant bays"),
+         desc="Storefront-bay dressing on open tenant bays"),
+    dict(name="storefront_style", type='ENUM', default='mixed',
+         items=('mixed', 'checker', 'tile', 'stucco', 'panel'),
+         desc="Bulkhead style (mixed = per-bay variety)"),
     dict(name="tenant_width", type='FLOAT', default=5.5, min=4.0, max=8.0,
          unit='LENGTH', desc="Bay width per tenant"),
     dict(name="depth", type='FLOAT', default=12.0, min=8.0, max=16.0,
