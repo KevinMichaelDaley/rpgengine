@@ -40,6 +40,7 @@ static const char *const PBR_VS =
  * Lit by one directional sun + a constant ambient (extended later). */
 static const char *const PBR_FS =
     "#version 330 core\n"
+    "#extension GL_ARB_texture_gather : require\n"
     "#extension GL_ARB_texture_cube_map_array : require\n" /* samplerCubeArray (shadows). */
     "in vec3 v_world_pos;\n"
     "in vec3 v_normal;\n"
@@ -327,6 +328,21 @@ static const char *const PBR_FS =
      * once the receiver is behind the glass as seen from the light. @p gbias is a\n"
      * SMALL fraction of the opaque bias -- glass and receiver are always DIFFERENT\n"
      * surfaces, so only depth-quantisation slack is needed, not acne bias. */
+    /* Filtered depth compare, sampler2DArrayShadow-equivalent: the atlas holds\n"
+     * linear DISTANCE in R32F color (not a depth attachment), so compare-mode\n"
+     * samplers cannot bind it -- textureGather computes the same LINEAR-compare\n"
+     * result: fetch the 2x2 bilinear footprint in one gather, compare each\n"
+     * texel, bilinearly weight the four binary results. Each PCF tap becomes a\n"
+     * smooth [0,1] coverage instead of a coin flip. */
+    "float pbr_csm_tap_hw(vec2 tuv, int i, float dref){\n"
+    "  vec4 g = textureGather(u_csm_static, vec3(tuv, float(i)));\n"
+    "  vec4 c = step(vec4(dref), g);\n"          /* 1 = lit (depth beyond ref). */
+    "  vec2 f = fract(tuv * u_csm_res - 0.5);\n"
+    /* gather order: x=(0,1) y=(1,1) z=(1,0) w=(0,0) of the footprint. */
+    "  float bot = mix(c.w, c.z, f.x);\n"
+    "  float top = mix(c.x, c.y, f.x);\n"
+    "  return mix(bot, top, f.y);\n"
+    "}\n"
     "vec3 pbr_csm_tap_trans(vec2 tuv, int i, float d, float gbias){\n"
     "  if(u_csm_mask_on==0) return vec3(1.0);\n"
     "  vec4 m = texture(u_csm_mask_color, vec3(tuv, float(i)));\n"
@@ -404,8 +420,7 @@ static const char *const PBR_FS =
     "    float litf = 0.0;\n"
     "    for(int s=0;s<taps;++s){\n"
     "      vec2 tuv = uv + rot*PZ[s]*prad;\n"
-    "      float dp = texture(u_csm_static, vec3(tuv, float(i))).r;\n"
-    "      if(dp >= d - bias) litf += 1.0;\n"
+    "      litf += pbr_csm_tap_hw(tuv, i, d - bias);\n"     /* filtered, not binary. */
     "    }\n"
     "    vec3 lit = vec3(litf / float(taps)) * pbr_csm_glass(uv, i, d, gbias, prad, rot);\n"
     /* Cascades TILE the light frustum; at a tile seam the guard band puts a\n"
