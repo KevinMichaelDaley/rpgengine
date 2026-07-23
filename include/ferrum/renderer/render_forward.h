@@ -75,6 +75,7 @@ typedef struct render_forward_config {
     uint32_t           dir_dynamic_res; /**< per-cascade dynamic map resolution. */
     float              dir_lambda;      /**< cascade split blend (0=uniform,1=log). */
     float              dir_bias;        /**< directional distance-compare bias. */
+    int                dir_pcf_taps;    /**< CSM PCF taps (8 or 16; 0 -> 8). */
     float              dir_max_distance;/**< cap the shadowed range (0 = camera far). */
     float              dir_softness;    /**< sun-penumbra EVSM mip LOD (0 = crisp,
                                          *   ~2-3 = soft). */

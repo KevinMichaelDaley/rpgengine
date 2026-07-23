@@ -151,6 +151,8 @@ static void fwd_forward_submit(void *ud)
     if (f->cfg.dir_cascades > 0u) {
         shadow_csm_bind(&f->csm, &f->cache, &f->pbr, 22u, 23u);
         shader_uniform_set_float(&f->cache, &f->pbr, "u_dir_bias", f->cfg.dir_bias);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_csm_taps",
+                               f->cfg.dir_pcf_taps == 16 ? 16 : 8);
     } else {
         /* The u_csm_* sampler2DArrays are declared in the program, so they must
          * be assigned distinct units (22/23) even when disabled -- two samplers
