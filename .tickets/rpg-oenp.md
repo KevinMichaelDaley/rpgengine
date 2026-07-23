@@ -2,7 +2,7 @@
 id: rpg-oenp
 status: open
 deps: []
-links: []
+links: [rpg-kwh0]
 created: 2026-07-21T01:36:33Z
 type: task
 priority: 1
