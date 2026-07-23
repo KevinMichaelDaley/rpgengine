@@ -53,29 +53,43 @@ static void dyn_vox_debug_dump(client_scene_t *cs, unsigned int tex,
     gi_probe_gpu_t *g2 = &cs->world.gi.gpu;
     uint32_t n = g2->n_probes;
     if (g2->b_pos != 0u && g2->b_sh != 0u && n > 0u && cs->dyn_count > 0u) {
-        enum { DBG_MAXP = 4096 };
-        static float pos[DBG_MAXP * 4], sh[DBG_MAXP * 24];
-        if (n > DBG_MAXP) n = DBG_MAXP;
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g2->b_pos);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                           (GLsizeiptr)(n * 4 * sizeof(float)), pos);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, g2->b_sh);
-        glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
-                           (GLsizeiptr)(n * 24 * sizeof(float)), sh);
-        glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
-        const float *c = cs->dyn_col[0].a;
-        int shown = 0;
-        for (uint32_t i = 0; i < n && shown < 3; ++i) {
-            float dx = pos[i*4]-c[0], dy = pos[i*4+1]-c[1], dz = pos[i*4+2]-c[2];
-            if (dx*dx + dy*dy + dz*dz < 2.0f*2.0f) {
-                fprintf(stderr, "[dynvox]  probe %u @(%.1f,%.1f,%.1f) act=%.0f shd:",
-                        i, pos[i*4], pos[i*4+1], pos[i*4+2], pos[i*4+3]);
-                for (int k = 0; k < 12; ++k) fprintf(stderr, " %.3f", sh[i*24+k]);
-                fprintf(stderr, "\n");
-                ++shown;
+        /* Scan the WHOLE set (heap scratch): a fixed 4096-probe window only
+         * ever saw the coarse lattice on dense shell sets (rpg-th87). */
+        float *pos = malloc((size_t)n * 4u * sizeof(float));
+        float *sh = malloc((size_t)n * 24u * sizeof(float));
+        if (pos != NULL && sh != NULL) {
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, g2->b_pos);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                               (GLsizeiptr)((size_t)n * 4u * sizeof(float)), pos);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, g2->b_sh);
+            glGetBufferSubData(GL_SHADER_STORAGE_BUFFER, 0,
+                               (GLsizeiptr)((size_t)n * 24u * sizeof(float)), sh);
+            glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+            const float *c = cs->dyn_col[0].a;
+            uint32_t nonzero = 0, near2 = 0;
+            int shown = 0;
+            for (uint32_t i = 0; i < n; ++i) {
+                float m = 0.0f;
+                for (int k = 0; k < 12; ++k) m += fabsf(sh[i*24+k]);
+                if (m > 1e-4f) ++nonzero;
+                float dx = pos[i*4]-c[0], dy = pos[i*4+1]-c[1], dz = pos[i*4+2]-c[2];
+                if (dx*dx + dy*dy + dz*dz < 2.0f*2.0f) {
+                    ++near2;
+                    if (shown < 3) {
+                        fprintf(stderr, "[dynvox]  probe %u @(%.1f,%.1f,%.1f) act=%.0f shd:",
+                                i, pos[i*4], pos[i*4+1], pos[i*4+2], pos[i*4+3]);
+                        for (int k = 0; k < 12; ++k) fprintf(stderr, " %.3f", sh[i*24+k]);
+                        fprintf(stderr, "\n");
+                        ++shown;
+                    }
+                }
             }
+            fprintf(stderr, "[dynvox]  probes=%u nonzero_sh=%u within2m=%u\n",
+                    n, nonzero, near2);
+            if (near2 == 0) fprintf(stderr, "[dynvox]  NO probes within 2m of dyn[0]!\n");
         }
-        if (shown == 0) fprintf(stderr, "[dynvox]  NO probes within 2m of dyn[0]!\n");
+        free(pos);
+        free(sh);
     }
 }
 

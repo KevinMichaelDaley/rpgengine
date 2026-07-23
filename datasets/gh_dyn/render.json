@@ -26,5 +26,5 @@
  "sdf_fp16": 1,
  "lm_fp16": 1,
  "gi_brick_shell": 2.0,
- "gi_brick_shell_levels": 4
+ "gi_brick_shell_levels": 3
 }
