@@ -26,6 +26,7 @@ Validation: la.topology.validate() must report 100% quads, 0 ngons/tris,
 """
 import bpy
 
+from . import elements as el2
 from .. import params
 from .. import topology
 from ..geom import (
@@ -557,10 +558,14 @@ def build_dingbat(p, rng):
             _box(plat, (cx0, 0.004, top_hi - 0.12), (cx1, ycat1, top_hi),
                  M_CONCRETE)
             plat.tag = 'loggia'
-            _wall_solid(plat, 'y', rail_at, 0.05, ycat1 - 0.05,
-                        top_hi + 0.002, top_hi + 0.92, 0.12, None, M_STUCCO)
-            _wall_solid(plat, 'x', 0.05, ret0, ret1,
-                        top_hi + 0.002, top_hi + 0.92, 0.12, None, M_STUCCO)
+            # picket railing: ONE mitred L path (return run + outer run
+            # merged at the corner) instead of two solid stucco walls.
+            corner_x = rail_at + 0.06
+            inner_x = (ret0 if loggia == 'right' else ret1)
+            el2.emit_railing_path(
+                plat, [(inner_x, 0.11), (corner_x, 0.11),
+                       (corner_x, ycat1 - 0.05)],
+                z0=top_hi + 0.002, height=0.92, post_every=1.5)
             plat.tag = 'columns'
             pxm = (cx0 + cx1) / 2.0
             for pyc in (D * 0.35, D * 0.70):
@@ -589,8 +594,10 @@ def build_dingbat(p, rng):
             rx0 = lg0 + 0.02 if not (lg_walkup and loggia == 'left') else 0.18
             rx1 = lg1 - 0.02 if not (lg_walkup and loggia == 'right') \
                 else W - 0.18
-            _wall_solid(plat, 'x', 0.03, rx0, rx1, lo_t + 0.002, rail_top,
-                        0.12, None, M_STUCCO)
+            z0r = (lo_t if lg_walkup else top_hi) + 0.002
+            el2.emit_railing_path(plat, [(rx0, 0.09), (rx1, 0.09)],
+                                  z0=z0r, height=rail_top - z0r,
+                                  post_every=1.4)
         loggia_platform = plat.to_object("LA_Dingbat_Loggia", mats)
 
     body = shell.to_object("LA_Dingbat_Body", mats)
@@ -627,166 +634,193 @@ def build_dingbat(p, rng):
     # would be an ngon end-cap terminates INSIDE the stringer faces, which is
     # what stringers are for. Landings are slab plates on four continuous
     # posts to grade. All separate clean shells. -----------------------------
-    stair = _Shell()
-    stair.tag = 'steps'
-    tread, s_w, st = 0.26, 1.1, 0.09          # tread run, lane width, stringer
-    side = p["stair_side"]
-    sdir = -1.0 if side == 'left' else 1.0
-    laneB_x0 = (-s_w - 0.05) if side == 'left' else (W + 0.05)
-    laneA_x0 = laneB_x0 + sdir * (s_w + 0.06)
-    wd = 1.25
-    levels = [0.0] + [hi for (_lo, hi, _bt) in floor_bands]   # = floor lines
-    # (walkway tops sit here too: doors flush, no threshold step)
-    y_arr = D + wd + 0.02     # flights meet the walkway at its outer EDGE:
-    # starting/arriving inside the band collided with the slab (user-hit:
-    # "joined at the wrong places except the bottom one").
+    wd = 1.25                            # walkway depth (shared below)
+    st_style = p.get("stair_style", 'tower')
+    stair_ob = None
+    stair_kit_obs = []
+    if st_style == 'switchback':
+        # STACKED kit switchbacks (fire-escape style): one unit per
+        # storey in the walkway extension, each EXIT flight landing ON
+        # that floor's walkway slab (never beside it).
+        levels_k = [0.0] + [hi for (_lo, hi, _bt) in floor_bands]
+        w9, gap9 = 1.0, 0.06
+        ox9 = (W + 0.12) if p["stair_side"] == 'right' else (-2.28)
+        for k9 in range(1, len(levels_k)):
+            hgt9 = levels_k[k9] - levels_k[k9 - 1]
+            if hgt9 < 1.2:
+                continue
+            n9 = max(6, int(round(hgt9 / 0.185)))
+            n1_9 = (n9 + 1) // 2
+            run1_9 = 0.27 * n1_9
+            ytop9 = run1_9 + 0.02 - 0.27 * (n9 - n1_9)
+            for ob9 in el2.build_switchback_stair(
+                    dict(width=w9, height=hgt9, rail_height=0.95,
+                         double_rail=True), rng):
+                ob9.name = "LA_Dingbat_Stair"
+                ob9.location = (ox9, D + wd + 0.03 - ytop9,
+                                levels_k[k9 - 1])
+                stair_kit_obs.append(ob9)
+    if st_style == 'tower':
+        stair = _Shell()
+        stair.tag = 'steps'
+        tread, s_w, st = 0.26, 1.1, 0.09          # tread run, lane width, stringer
+        side = p["stair_side"]
+        sdir = -1.0 if side == 'left' else 1.0
+        laneB_x0 = (-s_w - 0.05) if side == 'left' else (W + 0.05)
+        laneA_x0 = laneB_x0 + sdir * (s_w + 0.06)
+        wd = 1.25
+        levels = [0.0] + [hi for (_lo, hi, _bt) in floor_bands]   # = floor lines
+        # (walkway tops sit here too: doors flush, no threshold step)
+        y_arr = D + wd + 0.02     # flights meet the walkway at its outer EDGE:
+        # starting/arriving inside the band collided with the slab (user-hit:
+        # "joined at the wrong places except the bottom one").
 
-    def _stringer(x0s, x1s, y_base, z_base, y_top, z_top, foot_lo, foot_hi):
-        """One footed stringer solid from base (low z) to top (high z),
-        either y direction. The bottom is CLIPPED flat at each end --
-        z_base - foot_lo and z_top - foot_hi -- instead of running the
-        constant 0.34 m depth past the ends (the old 'tooth' hanging
-        0.28 m under every platform, and underground at grade). All
-        parametrics run base->top so the rise is ALWAYS positive (a y-
-        sorted version inverted the kinks on descending flights and grew
-        the solid past both ends). Hexagon profile: 3 top / 3 bottom /
-        3-per-side / 2 end quads, all planar; winding flips with y."""
-        # 0.22 m channel depth: at stair slope the end clip (rising from
-        # full depth to the platform underside) spans depth/slope -- the
-        # old 0.34 m made a 24 cm sliver taper that read as 'super
-        # compressed' at every flight top; 0.22 m clips in ~8 cm.
-        cover, depth = 0.06, 0.22
-        rise_t = z_top - z_base
-        t1 = min(0.45, (depth - cover - foot_lo) / rise_t)
-        t2 = max(0.55, 1.0 - (depth - cover - foot_hi) / rise_t)
-        ys4 = [y_base + (y_top - y_base) * t for t in (0.0, t1, t2, 1.0)]
-        ts4 = [z_base + rise_t * t + cover for t in (0.0, t1, t2, 1.0)]
-        bs4 = [z_base - foot_lo, z_base - foot_lo,
-               z_top - foot_hi, z_top - foot_hi]
-        flip = y_top < y_base
+        def _stringer(x0s, x1s, y_base, z_base, y_top, z_top, foot_lo, foot_hi):
+            """One footed stringer solid from base (low z) to top (high z),
+            either y direction. The bottom is CLIPPED flat at each end --
+            z_base - foot_lo and z_top - foot_hi -- instead of running the
+            constant 0.34 m depth past the ends (the old 'tooth' hanging
+            0.28 m under every platform, and underground at grade). All
+            parametrics run base->top so the rise is ALWAYS positive (a y-
+            sorted version inverted the kinks on descending flights and grew
+            the solid past both ends). Hexagon profile: 3 top / 3 bottom /
+            3-per-side / 2 end quads, all planar; winding flips with y."""
+            # 0.22 m channel depth: at stair slope the end clip (rising from
+            # full depth to the platform underside) spans depth/slope -- the
+            # old 0.34 m made a 24 cm sliver taper that read as 'super
+            # compressed' at every flight top; 0.22 m clips in ~8 cm.
+            cover, depth = 0.06, 0.22
+            rise_t = z_top - z_base
+            t1 = min(0.45, (depth - cover - foot_lo) / rise_t)
+            t2 = max(0.55, 1.0 - (depth - cover - foot_hi) / rise_t)
+            ys4 = [y_base + (y_top - y_base) * t for t in (0.0, t1, t2, 1.0)]
+            ts4 = [z_base + rise_t * t + cover for t in (0.0, t1, t2, 1.0)]
+            bs4 = [z_base - foot_lo, z_base - foot_lo,
+                   z_top - foot_hi, z_top - foot_hi]
+            flip = y_top < y_base
 
-        def q(a, b, c, d):
-            if flip:
-                stair.quad(a, d, c, b, M_METAL)
-            else:
-                stair.quad(a, b, c, d, M_METAL)
+            def q(a, b, c, d):
+                if flip:
+                    stair.quad(a, d, c, b, M_METAL)
+                else:
+                    stair.quad(a, b, c, d, M_METAL)
 
-        for k4 in range(3):
-            ya4, yb4 = ys4[k4], ys4[k4 + 1]
-            ta4, tb4 = ts4[k4], ts4[k4 + 1]
-            ba4, bb4 = bs4[k4], bs4[k4 + 1]
-            q((x0s, ya4, ta4), (x1s, ya4, ta4), (x1s, yb4, tb4),
-              (x0s, yb4, tb4))                                # top (+z)
-            q((x0s, ya4, ba4), (x0s, yb4, bb4), (x1s, yb4, bb4),
-              (x1s, ya4, ba4))                                # bottom (-z)
-            q((x0s, ya4, ba4), (x0s, ya4, ta4), (x0s, yb4, tb4),
-              (x0s, yb4, bb4))                                # -x side
-            q((x1s, ya4, ta4), (x1s, ya4, ba4), (x1s, yb4, bb4),
-              (x1s, yb4, tb4))                                # +x side
-        q((x0s, ys4[0], ts4[0]), (x0s, ys4[0], bs4[0]),
-          (x1s, ys4[0], bs4[0]), (x1s, ys4[0], ts4[0]))            # base (-y)
-        q((x0s, ys4[3], bs4[3]), (x0s, ys4[3], ts4[3]),
-          (x1s, ys4[3], ts4[3]), (x1s, ys4[3], bs4[3]))            # top (+y)
+            for k4 in range(3):
+                ya4, yb4 = ys4[k4], ys4[k4 + 1]
+                ta4, tb4 = ts4[k4], ts4[k4 + 1]
+                ba4, bb4 = bs4[k4], bs4[k4 + 1]
+                q((x0s, ya4, ta4), (x1s, ya4, ta4), (x1s, yb4, tb4),
+                  (x0s, yb4, tb4))                                # top (+z)
+                q((x0s, ya4, ba4), (x0s, yb4, bb4), (x1s, yb4, bb4),
+                  (x1s, ya4, ba4))                                # bottom (-z)
+                q((x0s, ya4, ba4), (x0s, ya4, ta4), (x0s, yb4, tb4),
+                  (x0s, yb4, bb4))                                # -x side
+                q((x1s, ya4, ta4), (x1s, ya4, ba4), (x1s, yb4, bb4),
+                  (x1s, yb4, tb4))                                # +x side
+            q((x0s, ys4[0], ts4[0]), (x0s, ys4[0], bs4[0]),
+              (x1s, ys4[0], bs4[0]), (x1s, ys4[0], ts4[0]))            # base (-y)
+            q((x0s, ys4[3], bs4[3]), (x0s, ys4[3], ts4[3]),
+              (x1s, ys4[3], ts4[3]), (x1s, ys4[3], bs4[3]))            # top (+y)
 
-    def flight(x0, y_from, y_to, z_from, z_to, foot_base, foot_top):
-        """One flight between two levels along y (either direction).
-        foot_base/foot_top: how far below its start/arrival level the
-        stringer may reach (0 at grade, slab/plate thickness elsewhere)."""
-        x1 = x0 + s_w
-        n = max(3, int(round(abs(z_to - z_from) / 0.185)))
-        rise = (z_to - z_from) / n
-        run = (y_to - y_from) / n
-        for sx0, sx1 in ((x0, x0 + st), (x1 - st, x1)):
-            _stringer(sx0, sx1, y_from, z_from, y_to, z_to,
-                      foot_base, foot_top)
-        # tread/riser strip between the stringers, inset 1 mm: its boundary
-        # hides inside the joint but never lands on a stringer edge (the
-        # auditor's 16 T-junctions per flight when coincident).
-        # 6 mm channel reveal between strip and stringers (1 mm put the
-        # ground flight's first riser corners visually ON the stringer
-        # feet -- the same 'merged vertices' read as the old soffit).
-        ix0, ix1 = x0 + st + 0.006, x1 - st - 0.006
-        dflip = y_to < y_from
+        def flight(x0, y_from, y_to, z_from, z_to, foot_base, foot_top):
+            """One flight between two levels along y (either direction).
+            foot_base/foot_top: how far below its start/arrival level the
+            stringer may reach (0 at grade, slab/plate thickness elsewhere)."""
+            x1 = x0 + s_w
+            n = max(3, int(round(abs(z_to - z_from) / 0.185)))
+            rise = (z_to - z_from) / n
+            run = (y_to - y_from) / n
+            for sx0, sx1 in ((x0, x0 + st), (x1 - st, x1)):
+                _stringer(sx0, sx1, y_from, z_from, y_to, z_to,
+                          foot_base, foot_top)
+            # tread/riser strip between the stringers, inset 1 mm: its boundary
+            # hides inside the joint but never lands on a stringer edge (the
+            # auditor's 16 T-junctions per flight when coincident).
+            # 6 mm channel reveal between strip and stringers (1 mm put the
+            # ground flight's first riser corners visually ON the stringer
+            # feet -- the same 'merged vertices' read as the old soffit).
+            ix0, ix1 = x0 + st + 0.006, x1 - st - 0.006
+            dflip = y_to < y_from
 
-        def qf(a, b, c, d):
-            # riser/tread/soffit winding must track travel direction: the
-            # fixed order inverted every descending flight's faces (the
-            # 'decimated' look under backface culling).
-            if dflip:
-                stair.quad(a, d, c, b, M_CONCRETE)
-            else:
-                stair.quad(a, b, c, d, M_CONCRETE)
+            def qf(a, b, c, d):
+                # riser/tread/soffit winding must track travel direction: the
+                # fixed order inverted every descending flight's faces (the
+                # 'decimated' look under backface culling).
+                if dflip:
+                    stair.quad(a, d, c, b, M_CONCRETE)
+                else:
+                    stair.quad(a, b, c, d, M_CONCRETE)
 
-        for k2 in range(n):
-            ya2, yb2 = y_from + run * k2, y_from + run * (k2 + 1)
-            zlo2, zhi2 = z_from + rise * k2, z_from + rise * (k2 + 1)
-            qf((ix0, ya2, zlo2), (ix1, ya2, zlo2),
-               (ix1, ya2, zhi2), (ix0, ya2, zhi2))                      # riser
-            qf((ix0, ya2, zhi2), (ix1, ya2, zhi2),
-               (ix1, yb2, zhi2), (ix0, yb2, zhi2))                      # tread
-        # soffit: a RECESSED panel between the stringers -- 6 mm in from
-        # their faces, 20 mm above the footed bottom line. A 1 mm shadow
-        # copy of the stringer profile put its corners 1.4-3 mm from the
-        # stringer corners at every kink/end: in wireframe that read as
-        # doubled 'merged' vertices along the rails (user-hit).
-        cover, depth = 0.06, 0.22
-        rise_t = z_to - z_from
-        t1 = min(0.45, (depth - cover - foot_base) / rise_t)
-        t2 = max(0.55, 1.0 - (depth - cover - foot_top) / rise_t)
-        ydir = 1.0 if y_to > y_from else -1.0
-        sx0f, sx1f = x0 + st + 0.006, x1 - st - 0.006
-        ysf = [y_from + (y_to - y_from) * t for t in (0.0, t1, t2, 1.0)]
-        ysf[0] += 0.006 * ydir
-        ysf[3] -= 0.006 * ydir
-        bsf = [z_from - foot_base + 0.02, z_from - foot_base + 0.02,
-               z_to - foot_top + 0.02, z_to - foot_top + 0.02]
-        for k4 in range(3):
-            qf((sx0f, ysf[k4], bsf[k4]), (sx0f, ysf[k4 + 1], bsf[k4 + 1]),
-               (sx1f, ysf[k4 + 1], bsf[k4 + 1]), (sx1f, ysf[k4], bsf[k4]))
+            for k2 in range(n):
+                ya2, yb2 = y_from + run * k2, y_from + run * (k2 + 1)
+                zlo2, zhi2 = z_from + rise * k2, z_from + rise * (k2 + 1)
+                qf((ix0, ya2, zlo2), (ix1, ya2, zlo2),
+                   (ix1, ya2, zhi2), (ix0, ya2, zhi2))                      # riser
+                qf((ix0, ya2, zhi2), (ix1, ya2, zhi2),
+                   (ix1, yb2, zhi2), (ix0, yb2, zhi2))                      # tread
+            # soffit: a RECESSED panel between the stringers -- 6 mm in from
+            # their faces, 20 mm above the footed bottom line. A 1 mm shadow
+            # copy of the stringer profile put its corners 1.4-3 mm from the
+            # stringer corners at every kink/end: in wireframe that read as
+            # doubled 'merged' vertices along the rails (user-hit).
+            cover, depth = 0.06, 0.22
+            rise_t = z_to - z_from
+            t1 = min(0.45, (depth - cover - foot_base) / rise_t)
+            t2 = max(0.55, 1.0 - (depth - cover - foot_top) / rise_t)
+            ydir = 1.0 if y_to > y_from else -1.0
+            sx0f, sx1f = x0 + st + 0.006, x1 - st - 0.006
+            ysf = [y_from + (y_to - y_from) * t for t in (0.0, t1, t2, 1.0)]
+            ysf[0] += 0.006 * ydir
+            ysf[3] -= 0.006 * ydir
+            bsf = [z_from - foot_base + 0.02, z_from - foot_base + 0.02,
+                   z_to - foot_top + 0.02, z_to - foot_top + 0.02]
+            for k4 in range(3):
+                qf((sx0f, ysf[k4], bsf[k4]), (sx0f, ysf[k4 + 1], bsf[k4 + 1]),
+                   (sx1f, ysf[k4 + 1], bsf[k4 + 1]), (sx1f, ysf[k4], bsf[k4]))
 
-    land_y0 = None
-    for i in range(len(levels) - 1):
-        zb, zt = levels[i], levels[i + 1]
-        zh = (zb + zt) / 2.0
-        n_half = max(3, int(round((zh - zb) / 0.185)))
-        run = tread * n_half
-        land_y0 = y_arr + run + 0.003
-        # flight A (outer lane): away from the building, base at the
-        # walkway edge (grade for the first), TOP at the plate's near edge.
-        flight(laneA_x0, y_arr, land_y0 - 0.006, zb, zh,
-               0.0 if i == 0 else 0.12, 0.10)
-        # half landing plate.
+        land_y0 = None
+        for i in range(len(levels) - 1):
+            zb, zt = levels[i], levels[i + 1]
+            zh = (zb + zt) / 2.0
+            n_half = max(3, int(round((zh - zb) / 0.185)))
+            run = tread * n_half
+            land_y0 = y_arr + run + 0.003
+            # flight A (outer lane): away from the building, base at the
+            # walkway edge (grade for the first), TOP at the plate's near edge.
+            flight(laneA_x0, y_arr, land_y0 - 0.006, zb, zh,
+                   0.0 if i == 0 else 0.12, 0.10)
+            # half landing plate.
+            lx0 = min(laneA_x0, laneB_x0)
+            lx1 = max(laneA_x0, laneB_x0) + s_w
+            _box(stair, (lx0, land_y0, zh - 0.10), (lx1, land_y0 + s_w, zh),
+                 M_CONCRETE)
+            # flight B (inner lane): BASE AT THE SAME (near) EDGE of the plate
+            # -- a true switchback: top out beside it, turn around on the
+            # plate, and board the upper flight from where you stand. (Basing
+            # it at the FAR edge put every upper flight's first riser across
+            # the plate from the arriving walker: consistently un-ascendable.)
+            flight(laneB_x0, land_y0 - 0.006, y_arr, zh, zt, 0.10, 0.12)
+
+        # four continuous posts carry the stacked half-landings, grade -> top.
+        # UNDER the plate corners and embedded 20 mm into the underside --
+        # posts standing outside the corners with air gaps held up nothing
+        # (user-hit: "they dont actually touch the things they are holding up").
+        stair.tag = 'columns'
+        top_land = (levels[-2] + levels[-1]) / 2.0 if len(levels) > 1 else levels[-1]
         lx0 = min(laneA_x0, laneB_x0)
         lx1 = max(laneA_x0, laneB_x0) + s_w
-        _box(stair, (lx0, land_y0, zh - 0.10), (lx1, land_y0 + s_w, zh),
-             M_CONCRETE)
-        # flight B (inner lane): BASE AT THE SAME (near) EDGE of the plate
-        # -- a true switchback: top out beside it, turn around on the
-        # plate, and board the upper flight from where you stand. (Basing
-        # it at the FAR edge put every upper flight's first riser across
-        # the plate from the arriving walker: consistently un-ascendable.)
-        flight(laneB_x0, land_y0 - 0.006, y_arr, zh, zt, 0.10, 0.12)
-
-    # four continuous posts carry the stacked half-landings, grade -> top.
-    # UNDER the plate corners and embedded 20 mm into the underside --
-    # posts standing outside the corners with air gaps held up nothing
-    # (user-hit: "they dont actually touch the things they are holding up").
-    stair.tag = 'columns'
-    top_land = (levels[-2] + levels[-1]) / 2.0 if len(levels) > 1 else levels[-1]
-    lx0 = min(laneA_x0, laneB_x0)
-    lx1 = max(laneA_x0, laneB_x0) + s_w
-    for (px2, py2) in ((lx0 + 0.01, land_y0 + 0.01), (lx1 - 0.09, land_y0 + 0.01),
-                       (lx0 + 0.01, land_y0 + s_w - 0.09),
-                       (lx1 - 0.09, land_y0 + s_w - 0.09)):
-        _box(stair, (px2, py2, 0.0), (px2 + 0.08, py2 + 0.08, top_land - 0.08),
-             M_METAL)
-    # walkway-extension posts: carry the arrival edge over the lanes --
-    # under the extension slab, embedded 20 mm into its underside.
-    wpx = (-2 * s_w - 0.10 + 0.02) if side == 'left' else (W + 2 * s_w + 0.02)
-    for wy in (D + 0.05, D + wd - 0.13):
-        _box(stair, (wpx, wy, 0.0), (wpx + 0.08, wy + 0.08,
-             floor_bands[-1][1] - 0.10), M_METAL)
-    stair_ob = stair.to_object("LA_Dingbat_Stair", mats)
+        for (px2, py2) in ((lx0 + 0.01, land_y0 + 0.01), (lx1 - 0.09, land_y0 + 0.01),
+                           (lx0 + 0.01, land_y0 + s_w - 0.09),
+                           (lx1 - 0.09, land_y0 + s_w - 0.09)):
+            _box(stair, (px2, py2, 0.0), (px2 + 0.08, py2 + 0.08, top_land - 0.08),
+                 M_METAL)
+        # walkway-extension posts: carry the arrival edge over the lanes --
+        # under the extension slab, embedded 20 mm into its underside.
+        wpx = (-2 * s_w - 0.10 + 0.02) if side == 'left' else (W + 2 * s_w + 0.02)
+        for wy in (D + 0.05, D + wd - 0.13):
+            _box(stair, (wpx, wy, 0.0), (wpx + 0.08, wy + 0.08,
+                 floor_bands[-1][1] - 0.10), M_METAL)
+        stair_ob = stair.to_object("LA_Dingbat_Stair", mats)
 
     # ---- rear walkway serving the upper units: slab + square posts. Built
     # in BOTH modes -- it is exterior circulation, and the stair tower
@@ -807,6 +841,45 @@ def build_dingbat(p, rng):
         x = 0.2 + (W - 0.4) * (i / 2.0)
         _box(walk, (x - 0.06, D + wd - 0.14, 0.0),
              (x + 0.06, D + wd - 0.02, floor_bands[-1][1] - 0.10), M_METAL)
+    # BALCONY RAILINGS (rpg-caur): per upper floor, a mitred picket path
+    # along the walkway's outer edge with a return at the far (non-stair)
+    # end. The stair zone stays open: the tower's flights arrive at the
+    # outer edge; the kit switchback exits through a gap in its span.
+    y_out = D + wd - 0.062
+    top_hi3 = floor_bands[-1][1]
+    for (_lo3, hi3, _bt3) in floor_bands:
+        if hi3 < 1.0:
+            continue                          # grade level: no rail
+        # switchback gaps: the TOP floor only receives the exit flight
+        # (narrow gap); every intermediate floor ALSO boards the next
+        # unit's entry flight, so the gap spans the WHOLE stair unit --
+        # a railing across the entry blocked the stair (user-hit).
+        top9 = abs(hi3 - top_hi3) < 1e-6
+        if p["stair_side"] == 'right':
+            far_x, ext0 = wx0 + 0.05, W - 0.02
+            segs9 = [('far', far_x, ext0)]
+            if st_style == 'switchback':
+                gapa = (W + 1.10) if top9 else (W + 0.06)
+                gapb = W + 2.24
+                segs9 = [('far', far_x, gapa), ('run', gapb, wx1 - 0.05)]
+        else:
+            far_x, ext0 = wx1 - 0.05, 0.02
+            segs9 = [('far', far_x, ext0)]
+            if st_style == 'switchback':
+                gapb = (-1.28) if top9 else (-0.06 - 2.18)
+                gapa = -0.14
+                segs9 = [('far', far_x, gapa), ('run', wx0 + 0.05, gapb)]
+        for (kind9, a9, b9) in segs9:
+            lo9, hi9 = min(a9, b9), max(a9, b9)
+            if hi9 - lo9 < 0.3:
+                continue
+            if kind9 == 'far':
+                pts9 = [(far_x, D + 0.06), (far_x, y_out),
+                        (b9 if far_x == a9 else a9, y_out)]
+            else:
+                pts9 = [(lo9, y_out), (hi9, y_out)]
+            el2.emit_railing_path(walk, pts9, z0=hi3, height=0.92,
+                                  post_every=1.5, tag='loggia')
     walkway_ob = walk.to_object("LA_Dingbat_Walkway", mats)
 
     # ---- INTERIOR MODE (rule 1): inner wall liners, slabs, partitions,
@@ -1047,7 +1120,7 @@ def build_dingbat(p, rng):
 
     # ---- engine tags --------------------------------------------------------
     out = [body, liner_ob, post_ob, stair_ob, walkway_ob, extras_ob, story_ob,
-           loggia_platform] + interior_obs
+           loggia_platform] + interior_obs + stair_kit_obs
     out = [ob for ob in out if ob is not None]
     for ob in out:
         ob["ferrum_lightmap_res"] = 0 if ob in (extras_ob, story_ob) else 128
@@ -1066,6 +1139,9 @@ SPEC = [
     dict(name="awnings", type='BOOL', default=True),
     dict(name="ac_units", type='FLOAT', default=0.4, min=0.0, max=1.0,
          desc="Window AC density"),
+    dict(name="stair_style", type='ENUM', default='tower',
+         items=('tower', 'switchback'),
+         desc="Rear stair: A1 stringer tower or stacked kit switchbacks"),
     dict(name="stair_side", type='ENUM', default='left',
          items=('left', 'right')),
     dict(name="facade_style", type='ENUM', default='plain',

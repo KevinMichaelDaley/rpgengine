@@ -428,7 +428,9 @@ def build_storefront_bay(p, rng):
                   top_z=head + (0.62 if not two else 1.6))
         for o in el.build_blade_sign(bp, rng):
             o.rotation_euler = (0.0, 0.0, -1.5707963)
-            o.location = (-0.02, 0.35, 0.0)
+            # plate mounts on the backing's outer face (front at y=0.024):
+            # 6 mm embedded, arms + blade projecting outward.
+            o.location = (-0.02, 0.030, 0.0)
             out.append(o)
 
     if p["awning"] != 'none':
@@ -439,10 +441,11 @@ def build_storefront_bay(p, rng):
             aw = w - 0.04
             ax, ay, az = 0.02, -0.035, head + 0.36
         else:
-            aw = max(1.2, w - (dw + 0.4 if door else 0.3))
-            ax = (door[1] + 0.15 if (door and p["door_pos"] == 'left')
-                  else 0.15)
-            ay, az = -0.02, head - 0.10
+            # ABOVE the window head, spanning the whole glazing row (door
+            # included) -- an awning never presses against the glass.
+            aw = w - 0.2
+            ax = 0.10
+            ay, az = -0.048, head - 0.02
         if p["awning"] == 'canvas':
             ap = dict(width=aw, depth=1.0, drop=0.5, valance=0.26,
                       stripes=True)

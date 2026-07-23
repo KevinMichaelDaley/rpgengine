@@ -1100,19 +1100,23 @@ def build_minimall(p, rng):
                                    bh9 + 0.10, Z_SF - 0.14)
             elif roll9 < 0.48 and (i in shop2 or
                                    not (office or cd >= 0.5)):
-                aw9 = min(o1 - o0 - 0.8, 3.4)
+                aw9 = o1 - o0 - 0.12
                 if aw9 > 1.1:
+                    # ABOVE the window head (not against the glass), spanning
+                    # the whole bay's window row.
                     ap9 = dict(width=aw9, depth=0.95, drop=0.45,
                                valance=0.24, stripes=True)
                     for ob9 in el2.build_canvas_awning(ap9, rng):
-                        ob9.location = (o0 + 0.3, -0.03, Z_SF - 0.55)
+                        ob9.location = (o0 + 0.06, -0.048, Z_SF + 0.04)
                         sf_extra_obs.append(ob9)
             if rng.random() < 0.18:
                 bp9 = dict(height=1.7, projection=0.75, panels=3,
                            top_z=Z_SF - 0.15)
                 for ob9 in el2.build_blade_sign(bp9, rng):
                     ob9.rotation_euler = (0.0, 0.0, -1.5707963)
-                    ob9.location = (o0 + 0.06, 0.30, 0.0)
+                    # mount plate ON the outer wall face (5 mm embed), the
+                    # blade projecting out -- never buried inside the wall.
+                    ob9.location = (o0 + 0.06, 0.005, 0.0)
                     sf_extra_obs.append(ob9)
 
         # TWO-STORY SHOP structure: real floor slab (with a stairwell), full-
@@ -1675,6 +1679,8 @@ def build_minimall(p, rng):
     deck_top = Z_FAS if office else 3.35
     deck_lo = deck_top - 0.5 if office else Z_SF
     x_deck0 = -1.45 if office else 0.0
+    if office and p.get("stair_style", 'straight') == 'switchback':
+        x_deck0 = -2.55                # overhang under the whole switchback
     cut_spans = ([(a0, a1)] if anchor_on else []) + \
         [(xa['ox0'], xa['ox1']) for xa in xarms if xa['ox1'] > 0.0]
 
@@ -1701,8 +1707,9 @@ def build_minimall(p, rng):
     x_deck_w = 0.002 if west_blocked else (wx + x_deck0)
     stair_x = (cd + 0.7, cd + 1.9) if west_blocked else (-1.35, -0.15)
     if p.get("stair_style", 'straight') == 'switchback':
-        # the switchback footprint is ~2.3 m wide: widen the deck-rail gap.
-        stair_x = (cd + 0.7, cd + 3.0) if west_blocked else (-2.5, -0.15)
+        # rail gap = the EXIT flight's span only (it lands ON the wider
+        # overhang; the rest of the deck edge stays guarded).
+        stair_x = (cd + 0.7, cd + 3.0) if west_blocked else (-2.48, -1.36)
     deck_segs = _seg_subtract(split_segs(x_deck_w, Wm), shop2_spans)
     if has_canopy:
         for (sx0, sx1) in deck_segs:
@@ -1778,6 +1785,22 @@ def build_minimall(p, rng):
                 el2.emit_railing(can, r0 + 0.02, r1 - 0.02, axis='x',
                                  cross=-cd + 0.075, z0=deck_top + 0.002,
                                  height=0.92, post_every=1.8)
+        # side RETURNS: every deck-segment end (and both edges of a shop2
+        # break) gets a rail across the deck depth -- the deck edge is
+        # protected all the way around, stair gap excepted.
+        ret_xs = set()
+        for (s0, s1) in deck_segs:
+            ret_xs.add(round(s0, 3))
+            ret_xs.add(round(s1, 3))
+        for rx9 in sorted(ret_xs):
+            if stair_x[0] - 0.25 < rx9 < stair_x[1] + 0.25:
+                continue               # the stair lands here: keep it open
+            if rx9 < x_deck_w + 0.01 and west_blocked:
+                continue
+            side9 = 0.075 if rx9 < (x_deck_w + Wm) * 0.5 else -0.075
+            el2.emit_railing(can, -cd + 0.13, -0.10, axis='y',
+                             cross=rx9 + side9, z0=deck_top + 0.002,
+                             height=0.92, post_every=1.6)
         if corner:
             el2.emit_railing(can, -Wy + 0.05, -cd - 0.10, axis='y',
                              cross=Wm - cd + 0.075, z0=deck_top + 0.002,
