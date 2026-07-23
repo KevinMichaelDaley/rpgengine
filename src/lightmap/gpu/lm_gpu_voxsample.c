@@ -147,48 +147,19 @@ bool lm_gpu_voxelize_sample(const lm_mesh_t *meshes, uint32_t n_meshes,
     free(tile_of);
 
     /* GPU-resident meshes (culled to the whole box) + texture dedupe. */
-    lm_voxi_mesh_t *gm = calloc(n_meshes ? n_meshes : 1u, sizeof *gm);
-    const lm_image_t **imgs = calloc((size_t)n_meshes * 2u + 1u, sizeof *imgs);
-    GLuint *img_tex = calloc((size_t)n_meshes * 2u + 1u, sizeof *img_tex);
+    const float bmax9[3] = { box->max.x, box->max.y, box->max.z };
     float *out9 = malloc((size_t)n_points * 9u * sizeof(float));
-    if (gm == NULL || imgs == NULL || img_tex == NULL || out9 == NULL) {
-        free(gm); free((void *)imgs); free(img_tex); free(out9);
-        free(cnt); free(scat);
+    lm_voxi_scene_t sc;
+    if (out9 == NULL ||
+        !lm_voxi_scene_upload(meshes, n_meshes, org, bmax9, &sc)) {
+        free(out9); free(cnt); free(scat);
         return false;
     }
     for (uint32_t i = 0; i < n_points; ++i) {
         for (int k = 0; k < 8; ++k) out9[i * 9u + (uint32_t)k] = 0.0f;
         out9[i * 9u + 8u] = 1.0f;                        /* trans MIN seed */
     }
-    const float bmax9[3] = { box->max.x, box->max.y, box->max.z };
-    uint32_t n_gm = 0, n_img = 0;
     bool ok = true;
-    for (uint32_t i = 0; i < n_meshes && ok; ++i) {
-        const lm_mesh_t *m = &meshes[i];
-        if (m->index_count < 3 || m->positions == NULL || m->indices == NULL)
-            continue;
-        if (!lm_voxi_mesh_overlaps(m, org, bmax9)) continue;
-        ok = lm_voxi_upload_mesh(m, &gm[n_gm]);
-        if (!ok) break;
-        const lm_image_t *want[2] = { m->albedo_image, m->emissive_image };
-        GLuint got[2] = { 0u, 0u };
-        for (int k = 0; k < 2; ++k) {
-            if (want[k] == NULL) continue;
-            for (uint32_t j = 0; j < n_img; ++j)
-                if (imgs[j] == want[k]) { got[k] = img_tex[j]; break; }
-            if (got[k] == 0u) {
-                got[k] = lm_voxi_upload_image(want[k]);
-                if (got[k] != 0u) {
-                    imgs[n_img] = want[k];
-                    img_tex[n_img] = got[k];
-                    ++n_img;
-                }
-            }
-        }
-        gm[n_gm].alb_tex = got[0];
-        gm[n_gm].emi_tex = got[1];
-        ++n_gm;
-    }
 
     GLint vp[4];
     gl->GetIntegerv(GLV_VIEWPORT, vp);
@@ -221,11 +192,11 @@ bool lm_gpu_voxelize_sample(const lm_mesh_t *meshes, uint32_t n_meshes,
         }
         /* geometry crossing the tile? none -> outputs stay zeroed. */
         int any = 0;
-        for (uint32_t i = 0; i < n_gm && !any; ++i) {
+        for (uint32_t i = 0; i < sc.n_gm && !any; ++i) {
             any = 1;
             for (int c = 0; c < 3; ++c)
-                if (gm[i].bb_max[c] < torg[c] ||
-                    gm[i].bb_min[c] > torg[c] + text9[c])
+                if (sc.gm[i].bb_max[c] < torg[c] ||
+                    sc.gm[i].bb_min[c] > torg[c] + text9[c])
                     any = 0;
         }
         if (!any)
@@ -237,7 +208,7 @@ bool lm_gpu_voxelize_sample(const lm_mesh_t *meshes, uint32_t n_meshes,
         for (int axis = 0; axis < 3 && ok; ++axis) {
             lm_voxi_vols_t vols;
             if (!lm_voxi_vols_create(&vols, tdims, axis)) { ok = false; break; }
-            lm_voxi_raster_window(gm, n_gm, torg, text9, tdims, &vols);
+            lm_voxi_raster_window(sc.gm, sc.n_gm, torg, text9, tdims, &vols);
             /* gather this axis pass at the tile's points */
             gl->UseProgram(lm_voxi_sample);
             static const int perm[3][3] = { {1,2,0}, {0,2,1}, {0,1,2} };
@@ -296,10 +267,7 @@ bool lm_gpu_voxelize_sample(const lm_mesh_t *meshes, uint32_t n_meshes,
     }
 
     if (bufs[0] || bufs[1]) gl->DeleteBuffers(2, bufs);
-    for (uint32_t i = 0; i < n_gm; ++i) lm_voxi_free_mesh(&gm[i]);
-    for (uint32_t j = 0; j < n_img; ++j)
-        if (img_tex[j]) gl->DeleteTextures(1, &img_tex[j]);
-    free(gm); free((void *)imgs); free(img_tex);
+    lm_voxi_scene_free(&sc);
     free(out9); free(cnt); free(scat);
     gl->UseProgram(0u);
     gl->BindFramebuffer(GLV_FRAMEBUFFER, 0u);

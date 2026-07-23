@@ -10,7 +10,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "ferrum/lightmap/gpu/lm_gpu_chunk_build.h"
 #include "ferrum/lightmap/gpu/lm_gpu_voxelize.h"
+#include "ferrum/lightmap/lm_chunk_svo.h"
 #include "ferrum/renderer/egl_headless.h"
 
 static int g_checks, g_fails;
@@ -275,6 +277,54 @@ static void t_sample_tiled(void)
     CHECK(area[2] <= 0.0f, "off-quad point has surface area");
 }
 
+static uint32_t count_solid_leaves(const npc_svo_grid_t *svo)
+{
+    uint32_t nsolid = 0;
+    for (uint32_t i = 0; i < svo->node_count; ++i)
+        if (svo->nodes[i].occupancy == 0 &&
+            (svo->nodes[i].flags & NPC_SVO_FLAG_SOLID))
+            ++nsolid;
+    return nsolid;
+}
+
+static void t_gpu_svo_build(void)
+{
+    build_box(0.6f, 2.4f);
+    lm_mesh_t m = mesh_of(s_box_pos, s_box_nrm, s_box_uv, 24, s_box_idx, 36,
+                          0.8f, 0.2f, 0.1f, 1.0f);
+    lm_mesh_scene_t scn;
+    memset(&scn, 0, sizeof scn);
+    scn.meshes = &m;
+    scn.n_meshes = 1;
+    phys_aabb_t box = { { -0.5f, -0.5f, -0.5f }, { 3.5f, 3.5f, 3.5f } };
+
+    npc_svo_grid_t gsvo;
+    CHECK(lm_gpu_chunk_svo_build(&scn, box, 0.5f, &gsvo),
+          "gpu svo build failed");
+    uint32_t node = 0;
+    uint8_t fl = npc_svo_query_point(&gsvo,
+                                     (phys_vec3_t){ 0.6f, 1.5f, 1.5f }, &node);
+    CHECK((fl & NPC_SVO_FLAG_SOLID) != 0, "cube face leaf not solid");
+    CHECK(node < gsvo.node_count &&
+          fabsf(gsvo.nodes[node].diffuse[0] - 0.8f) < 0.08f &&
+          fabsf(gsvo.nodes[node].diffuse[1] - 0.2f) < 0.08f &&
+          fabsf(gsvo.nodes[node].diffuse[2] - 0.1f) < 0.08f,
+          "face leaf diffuse != tint");
+    fl = npc_svo_query_point(&gsvo, (phys_vec3_t){ 1.5f, 1.5f, 1.5f }, &node);
+    CHECK((fl & NPC_SVO_FLAG_SOLID) == 0, "cube interior solid");
+
+    /* leaf-set parity vs the CPU stamp+subsample build (raster vs tight-stamp
+     * shells differ slightly; counts must be the same order). */
+    npc_svo_grid_t csvo;
+    CHECK(lm_chunk_svo_build(&scn, box, 0.5f, true, &csvo),
+          "cpu reference build failed");
+    uint32_t gn = count_solid_leaves(&gsvo), cn = count_solid_leaves(&csvo);
+    CHECK(gn > 0 && cn > 0 && gn * 2u >= cn && cn * 2u >= gn,
+          "gpu/cpu solid leaf counts diverge");
+    npc_svo_grid_destroy(&gsvo);
+    npc_svo_grid_destroy(&csvo);
+}
+
 int main(void)
 {
     /* Pre-init failure mode first: run() without init must fail cleanly. */
@@ -306,6 +356,7 @@ int main(void)
     t_transmission();
     t_sample_points();
     t_sample_tiled();
+    t_gpu_svo_build();
     lm_gpu_voxelize_shutdown();
     egl_headless_shutdown();
     printf("lm_gpu_voxelize_tests: %d checks, %d failures\n", g_checks, g_fails);

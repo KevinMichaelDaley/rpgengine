@@ -284,44 +284,15 @@ bool lm_gpu_voxelize_run(const lm_mesh_t *meshes, uint32_t n_meshes,
     for (size_t i = 0; i < n; ++i) g.trans[i] = 1.0f;
 
     /* GPU-resident meshes (culled to the box) + material texture dedupe. */
-    lm_voxi_mesh_t *gm = calloc(n_meshes ? n_meshes : 1u, sizeof *gm);
-    const lm_image_t **imgs = calloc((size_t)n_meshes * 2u + 1u, sizeof *imgs);
-    GLuint *img_tex = calloc((size_t)n_meshes * 2u + 1u, sizeof *img_tex);
-    if (gm == NULL || imgs == NULL || img_tex == NULL) {
-        free(gm); free((void *)imgs); free(img_tex); free(cover);
+    const float bmin[3] = { box->min.x, box->min.y, box->min.z };
+    const float bmax[3] = { box->max.x, box->max.y, box->max.z };
+    lm_voxi_scene_t sc;
+    if (!lm_voxi_scene_upload(meshes, n_meshes, bmin, bmax, &sc)) {
+        free(cover);
         lm_gpu_vox_grid_free(&g);
         return false;
     }
-    const float bmin[3] = { box->min.x, box->min.y, box->min.z };
-    const float bmax[3] = { box->max.x, box->max.y, box->max.z };
-    uint32_t n_gm = 0, n_img = 0;
     bool ok = true;
-    for (uint32_t i = 0; i < n_meshes && ok; ++i) {
-        const lm_mesh_t *m = &meshes[i];
-        if (m->index_count < 3 || m->positions == NULL || m->indices == NULL)
-            continue;
-        if (!lm_voxi_mesh_overlaps(m, bmin, bmax)) continue;
-        ok = lm_voxi_upload_mesh(m, &gm[n_gm]);
-        if (!ok) break;
-        const lm_image_t *want[2] = { m->albedo_image, m->emissive_image };
-        GLuint got[2] = { 0u, 0u };
-        for (int k = 0; k < 2; ++k) {
-            if (want[k] == NULL) continue;
-            for (uint32_t j = 0; j < n_img; ++j)
-                if (imgs[j] == want[k]) { got[k] = img_tex[j]; break; }
-            if (got[k] == 0u) {
-                got[k] = lm_voxi_upload_image(want[k]);
-                if (got[k] != 0u) {
-                    imgs[n_img] = want[k];
-                    img_tex[n_img] = got[k];
-                    ++n_img;
-                }
-            }
-        }
-        gm[n_gm].alb_tex = got[0];
-        gm[n_gm].emi_tex = got[1];
-        ++n_gm;
-    }
 
     /* Saved state (the offline bake owns the context; restore what we touch). */
     GLint vp[4];
@@ -353,7 +324,7 @@ bool lm_gpu_voxelize_run(const lm_mesh_t *meshes, uint32_t n_meshes,
         for (int axis = 0; axis < 3 && ok; ++axis) {
             lm_voxi_vols_t vols;
             if (!lm_voxi_vols_create(&vols, wdims, axis)) { ok = false; break; }
-            lm_voxi_raster_window(gm, n_gm, worg, wext, wdims, &vols);
+            lm_voxi_raster_window(sc.gm, sc.n_gm, worg, wext, wdims, &vols);
             lm_voxi_vols_read(&vols, LM_VOX_CH_AREA, 1, rb_area);
             lm_voxi_vols_read(&vols, LM_VOX_CH_ALB, 4, rb_alb);
             lm_voxi_vols_read(&vols, LM_VOX_CH_EMI, 4, rb_emi);
@@ -388,10 +359,7 @@ bool lm_gpu_voxelize_run(const lm_mesh_t *meshes, uint32_t n_meshes,
     /* teardown + state restore */
     free(rb_area); free(rb_alb); free(rb_emi); free(rb_nrm); free(rb_tr);
     free(cover);
-    for (uint32_t i = 0; i < n_gm; ++i) lm_voxi_free_mesh(&gm[i]);
-    for (uint32_t j = 0; j < n_img; ++j)
-        if (img_tex[j]) gl->DeleteTextures(1, &img_tex[j]);
-    free(gm); free((void *)imgs); free(img_tex);
+    lm_voxi_scene_free(&sc);
     gl->UseProgram(0u);
     gl->BindFramebuffer(GLV_FRAMEBUFFER, 0u);
     gl->Viewport(vp[0], vp[1], vp[2], vp[3]);

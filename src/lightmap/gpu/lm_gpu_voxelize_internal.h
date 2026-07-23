@@ -173,6 +173,22 @@ typedef struct lm_voxi_mesh {
     float bb_min[3], bb_max[3];
 } lm_voxi_mesh_t;
 
+/** A box-culled, GPU-resident mesh set with its deduped material textures. */
+typedef struct lm_voxi_scene {
+    lm_voxi_mesh_t   *gm;
+    const lm_image_t **imgs;
+    GLuint           *img_tex;
+    uint32_t          n_gm, n_img;
+} lm_voxi_scene_t;
+
+/** Upload every mesh overlapping [bmin,bmax] + its textures. False = OOM/GL
+ *  failure (partial residency already released). */
+bool lm_voxi_scene_upload(const lm_mesh_t *meshes, uint32_t n_meshes,
+                          const float bmin[3], const float bmax[3],
+                          lm_voxi_scene_t *out);
+/** Release a scene's GL objects + arrays. Safe on a zeroed struct. */
+void lm_voxi_scene_free(lm_voxi_scene_t *s);
+
 /** Upload one mesh (interleaved pos/nrm/uv VBO + EBO + VAO, AABB cached). */
 bool lm_voxi_upload_mesh(const lm_mesh_t *m, lm_voxi_mesh_t *out);
 /** Delete a mesh's GL objects (textures are owned by the image cache). */
