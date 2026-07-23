@@ -428,13 +428,17 @@ def build_storefront_bay(p, rng):
             out.append(o)
 
     if p["awning"] != 'none':
-        # deconflicted with roll-ups: mounts lower and stands proud of the
-        # curtain plane whenever a curtain exists.
-        aw = max(1.2, w - (dw + 0.4 if door else 0.3))
-        ax = (door[1] + 0.15 if (door and p["door_pos"] == 'left') else 0.15)
-        ay, az = -0.02, head - 0.10
-        if ru in ('closed', 'half'):
-            ay, az = -0.13, head - 0.48
+        # roll-up present -> the awning mounts ABOVE the roll-up housing and
+        # spans the WHOLE bay (proud of the sign band); otherwise it hangs
+        # over the display span beside the door as usual.
+        if ru != 'none':
+            aw = w - 0.04
+            ax, ay, az = 0.02, -0.035, head + 0.36
+        else:
+            aw = max(1.2, w - (dw + 0.4 if door else 0.3))
+            ax = (door[1] + 0.15 if (door and p["door_pos"] == 'left')
+                  else 0.15)
+            ay, az = -0.02, head - 0.10
         if p["awning"] == 'canvas':
             ap = dict(width=aw, depth=1.0, drop=0.5, valance=0.26,
                       stripes=True)
