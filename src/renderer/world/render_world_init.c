@@ -2,6 +2,7 @@
  * @file render_world_init.c
  * @brief render_world assembly + teardown (rpg-i3wx).
  */
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -33,7 +34,11 @@ static void rw_refl_load(render_world_t *rw, const render_world_config_t *cfg)
     refl_probe_set_init(&set, probes, RW_REFL_CAP);
     float *mips[REFL_PROBE_MAX_MIPS] = { 0 };
     float *depth = NULL;
-    if (refl_file_load(cfg->refl_path, &set, mips, &depth)) {
+    bool loaded = refl_file_load(cfg->refl_path, &set, mips, &depth);
+    fprintf(stderr, "refl: %s '%s' (%u probes, tile %u, depth %u)\n",
+            loaded ? "loaded" : "NO sidecar", cfg->refl_path, set.count,
+            set.tile_res, set.depth_res);
+    if (loaded) {
         if (refl_gpu_upload(&rw->refl, cfg->forward.loader, &set, mips,
                             depth)) {
             rw->refl.gain = (cfg->refl_gain > 0.0f) ? cfg->refl_gain : 1.0f;

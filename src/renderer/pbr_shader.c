@@ -822,9 +822,13 @@ static const char *const PBR_FS =
     "      float cd = 0.5 / u_refl_depth_res;\n"
     "      vec2 duv = clamp(oct_enc(dv / dist), vec2(cd), vec2(1.0 - cd));\n"
     "      vec2 dm = texture(u_refl_depth, t1.xy + duv * t1.zw).rg;\n"
-    "      float dvr = dist - dm.x;\n"
+    /* Slack: the depth tile is angularly coarse, so a fragment ON the
+     * surface the probe sees has dist ~= mean +- texel error. Only kill
+     * when the fragment sits clearly BEHIND what the probe saw (25% +
+     * 0.6 m past the stored mean); Chebyshev softens the boundary. */
+    "      float dvr = dist - dm.x * 1.25 - 0.6;\n"
     "      if(dvr > 0.0){\n"
-    "        float var = max(dm.y - dm.x * dm.x, 0.01);\n"
+    "        float var = max(dm.y - dm.x * dm.x, 0.25);\n"
     "        wi *= clamp(var / (var + dvr * dvr), 0.02, 1.0);\n"
     "      }\n"
     "    }\n"
@@ -999,6 +1003,10 @@ static const char *const PBR_FS =
     "  vec3 spec_ibl = kS * mix(sg_spec, refl_spec, refl_w);\n"
     "  if(u_debug_mode==7){ frag=vec4(irr,1.0); return; }\n"
     "  if(u_debug_mode==10){ frag=vec4(spec_ibl*ao_o,1.0); return; }\n"
+    /* rpg-akwc tuning views: 12 = raw cubemap reflection term (radiance x
+     * occlusion), 13 = probe influence weight after the visibility test. */
+    "  if(u_debug_mode==12){ frag=vec4(refl_s.rgb*refl_s.a,1.0); return; }\n"
+    "  if(u_debug_mode==13){ frag=vec4(vec3(refl_w),1.0); return; }\n"
     "  ambient += (diff_ibl + spec_ibl) * ao_o;\n"
     /* Sky-openness ambient (constant sky colour where open overhead). */
     "  ambient += kD * albedo * gi_sky * (0.5+0.5*N.y) * u_gi_sky_color * ao;\n"
@@ -1010,6 +1018,13 @@ static const char *const PBR_FS =
     "  if(u_has_emissive==1) emissive *= texture(u_emissive_map,muv).rgb;\n"
     "  color += emissive;\n"
     "  color = color/(color+vec3(1.0));\n"
+    /* Translucent surfaces (rpg-akwc): the SRC_ALPHA blend multiplies the
+     * whole colour by opacity, but a specular REFLECTION is a surface term
+     * -- transmission must not attenuate it. Pre-divide the reflection (in
+     * LINEAR space, before the gamma) so the blend restores it to full
+     * strength and glass keeps its mirror. */
+    "  if(u_opacity < 0.999)\n"
+    "    color += spec_ibl * ao_o * (1.0/max(u_opacity, 0.05) - 1.0);\n"
     "  color = pow(color, vec3(1.0/2.2));\n"
     "  frag = vec4(color, u_opacity);\n"
     "}\n";
