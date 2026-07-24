@@ -2,14 +2,46 @@
  * @file render_world_init.c
  * @brief render_world assembly + teardown (rpg-i3wx).
  */
+#include <stdlib.h>
 #include <string.h>
 
+#include "ferrum/renderer/gi/refl_file.h"
 #include "ferrum/renderer/render_world.h"
 
-/* GI bind hook: the sole forward+ <-> GI coupling, at texture unit 24. */
+/* GI bind hook: the sole forward+ <-> GI coupling. Probe GI sits at texture
+ * unit 24+, the reflection-probe atlas/meta at 35 + 41 (rpg-akwc; the
+ * refl bind is unconditional so its samplers always own their units). */
 static void rw_gi_bind(void *u, shader_uniform_cache_t *c, const shader_program_t *p)
 {
-    gi_runtime_bind((gi_runtime_t *)u, c, p, 24u);
+    render_world_t *rw = (render_world_t *)u;
+    gi_runtime_bind(&rw->gi, c, p, 24u);
+    refl_gpu_bind(&rw->refl, c, p, 35u, 41u);
+}
+
+/* Load + upload the .rprobe sidecar (load-time heap, freed before return).
+ * Failure leaves rw->refl zeroed = feature off. */
+static void rw_refl_load(render_world_t *rw, const render_world_config_t *cfg)
+{
+    if (!cfg->refl_enabled || cfg->refl_path == NULL)
+        return;
+    enum { RW_REFL_CAP = 1024 };
+    refl_probe_t *probes =
+        (refl_probe_t *)malloc(RW_REFL_CAP * sizeof(refl_probe_t));
+    if (probes == NULL)
+        return;
+    refl_probe_set_t set;
+    refl_probe_set_init(&set, probes, RW_REFL_CAP);
+    float *mips[REFL_PROBE_MAX_MIPS] = { 0 };
+    if (refl_file_load(cfg->refl_path, &set, mips)) {
+        if (refl_gpu_upload(&rw->refl, cfg->forward.loader, &set, mips)) {
+            rw->refl.gain = (cfg->refl_gain > 0.0f) ? cfg->refl_gain : 1.0f;
+            if (cfg->refl_range > 0.0f)
+                rw->refl.range = cfg->refl_range;
+        }
+        for (uint32_t m = 0; m < REFL_PROBE_MAX_MIPS; ++m)
+            free(mips[m]);
+    }
+    free(probes);
 }
 
 bool render_world_init(render_world_t *rw, const render_world_config_t *cfg)
@@ -76,10 +108,12 @@ bool render_world_init(render_world_t *rw, const render_world_config_t *cfg)
         }
     }
 
+    rw_refl_load(rw, cfg);
+
     render_forward_config_t fc = cfg->forward;
     if (rw->gi_enabled) {
         fc.material_extra_bind = rw_gi_bind;
-        fc.material_extra_user = &rw->gi;
+        fc.material_extra_user = rw;
     }
     if (!render_forward_init(&rw->forward, &fc)) {
         if (rw->gi_enabled) gi_runtime_destroy(&rw->gi);
@@ -91,6 +125,7 @@ bool render_world_init(render_world_t *rw, const render_world_config_t *cfg)
 void render_world_destroy(render_world_t *rw)
 {
     if (rw == NULL) return;
+    refl_gpu_destroy(&rw->refl);
     if (rw->gi_enabled) gi_runtime_destroy(&rw->gi);
     render_forward_destroy(&rw->forward);
     rw->scene = NULL;

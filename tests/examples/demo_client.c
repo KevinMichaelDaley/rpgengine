@@ -34,6 +34,7 @@
 
 #include "ferrum/mesh/obj_loader.h"
 #include "ferrum/renderer/client_scene.h"
+#include "ferrum/renderer/gi/refl_bake.h"
 #include "ferrum/renderer/light_stream.h"
 #include "ferrum/renderer/client_bake.h"
 #include "ferrum/job/system.h"
@@ -1492,6 +1493,27 @@ int main(int argc, char **argv) {
                 bool ok = gi_runtime_bake_write_probesh(&cs.world.gi, g_bake_prefix);
                 fprintf(stderr, "[client] --bake-probes: %s (%s)\n",
                         ok ? "wrote per-chunk .probesh" : "FAILED", g_bake_prefix);
+                /* Sparse cubemap reflection probes (rpg-akwc): bake the
+                 * .rprobe sidecar in the same pass -- the scene, sun and
+                 * chunked SDF are all resident here. CLIENT_BAKE_REFL=0
+                 * skips; REFL_SPACING overrides the render.json default. */
+                const char *er = getenv("CLIENT_BAKE_REFL");
+                if (er == NULL || atoi(er) != 0) {
+                    refl_bake_params_t rp;
+                    memset(&rp, 0, sizeof rp);
+                    const char *es = getenv("REFL_SPACING");
+                    rp.spacing = es ? (float)atof(es) : 0.0f;
+                    const render_forward_config_t *fcfg = &cs.world.forward.cfg;
+                    for (int a2 = 0; a2 < 3; ++a2) {
+                        rp.sun_dir[a2] = fcfg->sun_dir[a2];
+                        rp.sun_color[a2] = fcfg->sun_color[a2];
+                        rp.ambient[a2] = fcfg->ambient[a2];
+                    }
+                    bool rok = refl_bake_run(&gl.loader, &cs.scene,
+                                             g_bake_prefix, &rp);
+                    fprintf(stderr, "[client] --bake-probes: refl %s\n",
+                            rok ? "wrote .rprobe" : "skipped/FAILED");
+                }
                 g_running = 0;
             }
 

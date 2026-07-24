@@ -1,0 +1,115 @@
+/**
+ * @file refl_bake.h
+ * @brief GL bake pass for reflection probes (rpg-akwc): rasterize the whole
+ *        scene into a probe-centred cube (single pass over the draw list per
+ *        face, lit with sun + a hemispherical irradiance term + emissive),
+ *        read the faces back, then CPU-assemble the octahedral atlas
+ *        (progressive prefilter + SDF specular-occlusion alpha) and write
+ *        the .rprobe sidecar.
+ *
+ * Ownership: refl_bake_init owns GL objects until refl_bake_destroy; the
+ * face readback buffers in refl_bake_probe are caller-owned. The bake is a
+ * one-shot offline pass -- heap allocation inside refl_bake_run is
+ * deliberate and documented (never per-frame).
+ */
+#ifndef FERRUM_RENDERER_GI_REFL_BAKE_H
+#define FERRUM_RENDERER_GI_REFL_BAKE_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "ferrum/renderer/gl_loader.h"
+#include "ferrum/renderer/render_scene.h"
+#include "ferrum/renderer/shader_program.h"
+#include "ferrum/renderer/shader_uniforms.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/** Bake knobs (all validated/clamped inside refl_bake_run). */
+typedef struct refl_bake_params {
+    float spacing;        /**< probe grid spacing in metres (default 12). */
+    uint32_t tile_res;    /**< octa tile edge at mip 0 (default 64). */
+    uint32_t mips;        /**< filtered mips, <= REFL_PROBE_MAX_MIPS (5). */
+    uint32_t face_res;    /**< cube face resolution (default 64). */
+    uint32_t max_probes;  /**< probe cap (default 256). */
+    float min_clear;      /**< SDF clearance for placement (default 0.75). */
+    float sun_dir[3];     /**< world direction TOWARD the sun. */
+    float sun_color[3];   /**< sun radiance. */
+    float ambient[3];     /**< sky irradiance for the hemispherical term. */
+} refl_bake_params_t;
+
+/** GL state for the cube pass (function pointers + FBO + shader). */
+typedef struct refl_bake {
+    shader_program_t shader;
+    shader_uniform_cache_t cache;
+    uint32_t fbo;
+    uint32_t color;      /**< RGBA32F face target. */
+    uint32_t depth_rb;
+    uint32_t face_res;
+    /* GL entry points (loaded in init; see the SC_LOAD pattern). */
+    void (*glGenFramebuffers)(int32_t, uint32_t *);
+    void (*glDeleteFramebuffers)(int32_t, const uint32_t *);
+    void (*glBindFramebuffer)(uint32_t, uint32_t);
+    void (*glFramebufferTexture2D)(uint32_t, uint32_t, uint32_t, uint32_t,
+                                   int32_t);
+    void (*glGenTextures)(int32_t, uint32_t *);
+    void (*glDeleteTextures)(int32_t, const uint32_t *);
+    void (*glBindTexture)(uint32_t, uint32_t);
+    void (*glTexImage2D)(uint32_t, int32_t, int32_t, int32_t, int32_t,
+                         int32_t, uint32_t, uint32_t, const void *);
+    void (*glTexParameteri)(uint32_t, uint32_t, int32_t);
+    void (*glGenRenderbuffers)(int32_t, uint32_t *);
+    void (*glDeleteRenderbuffers)(int32_t, const uint32_t *);
+    void (*glBindRenderbuffer)(uint32_t, uint32_t);
+    void (*glRenderbufferStorage)(uint32_t, uint32_t, int32_t, int32_t);
+    void (*glFramebufferRenderbuffer)(uint32_t, uint32_t, uint32_t,
+                                      uint32_t);
+    void (*glViewport)(int32_t, int32_t, int32_t, int32_t);
+    void (*glClearColor)(float, float, float, float);
+    void (*glClear)(uint32_t);
+    void (*glEnable)(uint32_t);
+    void (*glDisable)(uint32_t);
+    void (*glDepthFunc)(uint32_t);
+    void (*glDrawElements)(uint32_t, int32_t, uint32_t, const void *);
+    void (*glReadPixels)(int32_t, int32_t, int32_t, int32_t, uint32_t,
+                         uint32_t, void *);
+    void (*glFinish)(void);
+} refl_bake_t;
+
+/**
+ * Create the face target + lit bake shader. Returns false on NULL args or
+ * GL/shader failure (partial state cleaned up).
+ */
+bool refl_bake_init(refl_bake_t *rb, const gl_loader_t *loader,
+                    uint32_t face_res);
+
+/**
+ * Render the scene from @p pos into six RGBA32F faces (GL face order),
+ * each face_res^2*4 floats into @p faces[f] (caller-owned, non-NULL).
+ * Lighting: albedo(tint) * (sun N.L * @p sun_vis + hemispherical ambient)
+ * + emissive. @p sun_vis is the SDF sun visibility at the probe (0..1) --
+ * enclosed probes must not bake a false unshadowed sun.
+ */
+void refl_bake_probe(refl_bake_t *rb, const render_scene_t *scene,
+                     const float pos[3], const refl_bake_params_t *prm,
+                     float sun_vis, float *faces[6]);
+
+/** Destroy GL objects; NULL-safe, idempotent. */
+void refl_bake_destroy(refl_bake_t *rb);
+
+/**
+ * Full offline bake: place probes over the scene AABB (culled by the
+ * chunked SDF at @p sdf_prefix when present), render + filter + occlusion,
+ * write "<sdf_prefix>.rprobe". Returns false when nothing could be baked.
+ * Allocates transient CPU buffers with malloc (offline one-shot).
+ */
+bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
+                   const char *sdf_prefix, const refl_bake_params_t *prm);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* FERRUM_RENDERER_GI_REFL_BAKE_H */

@@ -24,6 +24,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "ferrum/renderer/gi/refl_bind.h"
 #include "ferrum/renderer/render_forward.h"
 #include "ferrum/renderer/render_scene.h"
 #include "ferrum/renderer/gi/gi_runtime.h"
@@ -83,12 +84,19 @@ typedef struct render_world_config {
     int          has_sky_ao; float sky_ao_color[3], sky_ao_ref, sky_ao_mult;
     int          has_spec_gain; float spec_gain;
     int          has_probe_gain; float probe_gain; /**< probe diffuse ambient gain. */
+
+    /* Sparse cubemap reflection probes (rpg-akwc). */
+    const char  *refl_path;     /**< .rprobe sidecar path (nullable). */
+    int          refl_enabled;  /**< 0 disables loading/binding. */
+    float        refl_gain;     /**< shader gain (0 -> 1.0). */
+    float        refl_range;    /**< probe influence radius (0 -> 14 m). */
 } render_world_config_t;
 
 /** The assembled render world. Treat fields as read-only from outside. */
 typedef struct render_world {
     render_forward_t forward;
     gi_runtime_t     gi;
+    refl_gpu_t       refl;     /**< sparse cubemap reflection probes. */
     render_scene_t  *scene;    /**< borrowed. */
     int              gi_enabled;
 } render_world_t;

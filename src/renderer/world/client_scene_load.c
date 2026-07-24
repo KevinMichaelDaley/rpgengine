@@ -589,6 +589,17 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
         snprintf(sdf_path, sizeof sdf_path, "%s/%s", base_dir, desc->lightdata.sdf_prefix);
         cfg.gi_sdf_prefix = sdf_path;
     }
+    /* Sparse cubemap reflection probes (rpg-akwc): whole-level sidecar next
+     * to the .probes/.bricks, loaded+uploaded inside render_world_init. */
+    static char refl_path[576];
+    if (desc->lightdata.sdf_prefix[0]) {
+        snprintf(refl_path, sizeof refl_path, "%s/%s.rprobe", base_dir,
+                 desc->lightdata.sdf_prefix);
+        cfg.refl_path = refl_path;
+    }
+    cfg.refl_enabled = rc.refl_enabled;
+    cfg.refl_gain = rc.refl_gain;
+    cfg.refl_range = rc.refl_range;   /* 0 = auto from baked spacing. */
     for (int a = 0; a < 3; ++a) {
         cfg.gi_aabb_min[a] = amin[a] + rc.gi_aabb_pad_lo[a];
         cfg.gi_aabb_max[a] = amax[a] - rc.gi_aabb_pad_hi[a];

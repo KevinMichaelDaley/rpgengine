@@ -70,7 +70,7 @@ ifeq ($(TRACY),1)
 endif
 ECS_SRC := $(wildcard src/ecs/*.c)
 ENTITY_SRC := $(wildcard src/entity/*.c)
-RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/gi/*.c) $(wildcard src/renderer/skinning/*.c) $(wildcard src/renderer/mesh/*.c) $(wildcard src/renderer/draw/*.c) $(wildcard src/renderer/ubo/*.c) $(wildcard src/renderer/gltf/*.c) $(wildcard src/renderer/scene/*.c) $(wildcard src/renderer/resource/*.c) $(wildcard src/renderer/world/*.c) $(wildcard src/renderer/chunk/*.c) $(wildcard src/renderer/cull/*.c)
+RENDERER_SRC := $(wildcard src/renderer/*.c) $(wildcard src/renderer/gi/*.c) $(wildcard src/renderer/gi/refl/*.c) $(wildcard src/renderer/skinning/*.c) $(wildcard src/renderer/mesh/*.c) $(wildcard src/renderer/draw/*.c) $(wildcard src/renderer/ubo/*.c) $(wildcard src/renderer/gltf/*.c) $(wildcard src/renderer/scene/*.c) $(wildcard src/renderer/resource/*.c) $(wildcard src/renderer/world/*.c) $(wildcard src/renderer/chunk/*.c) $(wildcard src/renderer/cull/*.c)
 RENDER_WORLD_SRC := src/renderer/world/render_world_init.c src/renderer/world/render_world_update.c
 RENDERER_DEBUG_LINES_SRC := $(wildcard src/renderer/debug_lines/*.c)
 RENDERER_VIDEO_CAPTURE_SRC := $(wildcard src/renderer/video_capture/*.c)
@@ -399,6 +399,8 @@ BIN_HEADLESS += build/gi_sdf_tests
 BIN_HEADLESS += build/gi_probe_kernel_tests
 BIN_HEADLESS += build/gi_probe_sample_tests
 BIN_HEADLESS += build/gi_probe_place_tests
+BIN_HEADLESS += build/refl_probe_tests
+BIN_RENDERER_TESTS += build/refl_probe_gl_tests
 BIN_HEADLESS += build/shadow_csm_grid_tests
 BIN_HEADLESS += build/chunk_tree_tests
 BIN_HEADLESS += build/probe_brick_tests
@@ -2471,6 +2473,17 @@ build/gi_probe_sample_tests: tests/renderer/gi_probe_sample_tests.c src/renderer
 
 build/gi_probe_place_tests: tests/renderer/gi_probe_place_tests.c src/renderer/gi/gi_probe_place.c src/renderer/gi/gi_probe_set.c | build
 	$(CC) $(CFLAGS) tests/renderer/gi_probe_place_tests.c src/renderer/gi/gi_probe_place.c src/renderer/gi/gi_probe_set.c -o $@ -lm
+
+REFL_TEST_SRC := tests/renderer/refl_probe_tests.c src/renderer/gi/refl/refl_probe_set.c \
+	src/renderer/gi/refl/refl_octa.c src/renderer/gi/refl/refl_octa_cube.c \
+	src/renderer/gi/refl/refl_atlas.c src/renderer/gi/refl/refl_filter.c \
+	src/renderer/gi/refl/refl_place.c src/renderer/gi/refl/refl_occl.c \
+	src/renderer/gi/refl/refl_file.c src/renderer/gi/gi_sdf.c
+build/refl_probe_tests: $(REFL_TEST_SRC) | build
+	$(CC) $(CFLAGS) $(REFL_TEST_SRC) -o $@ -lm
+
+build/refl_probe_gl_tests: build/liball.a tests/renderer/refl_probe_gl_tests.c | build
+	$(CC) $(CFLAGS) tests/renderer/refl_probe_gl_tests.c build/liball.a -o $@ $(RENDERER_TEST_LIBS) -lEGL $(LDFLAGS)
 
 build/gi_probe_kernel_tests: tests/renderer/gi_probe_kernel_tests.c src/renderer/gi/gi_probe_kernel.c src/renderer/gi/gi_probe_set.c src/renderer/gi/gi_sdf.c src/lightmap/lm_sh.c src/math/vec3.c | build
 	$(CC) $(CFLAGS) tests/renderer/gi_probe_kernel_tests.c src/renderer/gi/gi_probe_kernel.c src/renderer/gi/gi_probe_set.c src/renderer/gi/gi_sdf.c src/lightmap/lm_sh.c src/math/vec3.c -o $@ -lm

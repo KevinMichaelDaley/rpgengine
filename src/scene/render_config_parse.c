@@ -121,6 +121,15 @@ bool render_config_parse(const char *json, size_t len, struct arena *arena,
     out->static_k       = sd_field_num(r, "static_k",       out->static_k);
     out->spec_gain      = sd_field_num(r, "spec_gain",      out->spec_gain);
     out->gi_probe_gain  = sd_field_num(r, "gi_probe_gain",  out->gi_probe_gain);
+    out->refl_enabled = (int)sd_field_num(r, "refl_enabled",
+                                          (float)out->refl_enabled);
+    out->refl_spacing = sd_field_num(r, "refl_spacing", out->refl_spacing);
+    out->refl_tile = (uint32_t)sd_field_num(r, "refl_tile",
+                                            (float)out->refl_tile);
+    out->refl_mips = (uint32_t)sd_field_num(r, "refl_mips",
+                                            (float)out->refl_mips);
+    out->refl_gain = sd_field_num(r, "refl_gain", out->refl_gain);
+    out->refl_range = sd_field_num(r, "refl_range", out->refl_range);
     sd_field_vec(r, "sky_ao_color", out->sky_ao_color, 3);
     out->sky_ao_ref     = sd_field_num(r, "sky_ao_ref",     out->sky_ao_ref);
     out->sky_ao_mult    = sd_field_num(r, "sky_ao_mult",    out->sky_ao_mult);

@@ -548,6 +548,16 @@ static const char *const PBR_FS =
     "uniform usamplerBuffer u_probe_froxel_off;\n"
     "uniform usamplerBuffer u_probe_froxel_cnt;\n"
     "uniform usamplerBuffer u_probe_froxel_idx;\n"
+    /* Sparse cubemap reflection probes (rpg-akwc): prefiltered octahedral
+     * atlas (rgb radiance, a = SDF specular occlusion) + 2-texel meta TBO
+     * (pos+ao, tile uv rect). */
+    "uniform sampler2D u_refl_atlas;\n"
+    "uniform samplerBuffer u_refl_meta;\n"
+    "uniform int u_refl_count;\n"
+    "uniform float u_refl_mips;\n"
+    "uniform float u_refl_tile_res;\n"
+    "uniform float u_refl_gain;\n"
+    "uniform float u_refl_range;\n"
     /* Fills @p e_dyn (dynamic-light indirect) and @p e_stat (baked static indirect)
      * from the nearest probes' two SH4 sets, so main() can weight the static term
      * per object (rpg-pau4). */
@@ -780,6 +790,43 @@ static const char *const PBR_FS =
     "  if(wsum>1e-5) acc/=wsum;\n"
     "  return acc*u_gi_spec_gain;\n"
     "}\n"
+    /* Specular cavity (Lagarde/Frostbite): the surface AO + roughness maps
+     * modulate the ridges -- rough cavities keep their ambient occlusion,
+     * mirror-smooth ridges keep their reflection (rpg-akwc). */
+    "float refl_cavity(float ao, float rough, float NoV){\n"
+    "  return clamp(pow(NoV + ao, exp2(-16.0*rough - 1.0)) - 1.0 + ao,\n"
+    "               0.0, 1.0);\n"
+    "}\n"
+    /* Sparse cubemap probe split-sum tap (rpg-akwc): pick the strongest
+     * probe by distance falloff, sample its octahedral tile along R at the
+     * roughness mip. Returns rgb prefiltered radiance + a = baked specular
+     * occlusion; w = influence weight (0 where no probe reaches -- the SG
+     * probes fill that gap); pao = the probe's own mean occlusion. */
+    "vec4 gi_refl_sample(vec3 wp, vec3 R, float rough, out float w,\n"
+    "                    out float pao){\n"
+    "  w = 0.0; pao = 1.0;\n"
+    "  if(u_refl_count == 0) return vec4(0.0);\n"
+    "  int best = -1; float bw = 0.0;\n"
+    "  for(int i = 0; i < u_refl_count && i < 128; ++i){\n"
+    "    vec3 pp = texelFetch(u_refl_meta, i*2+0).xyz;\n"
+    "    float wi = 1.0 - smoothstep(0.0, max(u_refl_range, 1e-3),\n"
+    "                                length(pp - wp));\n"
+    "    if(wi > bw){ bw = wi; best = i; }\n"
+    "  }\n"
+    "  if(best < 0 || bw <= 0.0) return vec4(0.0);\n"
+    "  vec4 t0 = texelFetch(u_refl_meta, best*2+0);\n"
+    "  vec4 t1 = texelFetch(u_refl_meta, best*2+1);\n"
+    "  pao = t0.w;\n"
+    "  float lod = clamp(rough, 0.0, 1.0) * (u_refl_mips - 1.0);\n"
+    /* Clamp the octa uv half a texel inside the tile at the sampled level
+     * so bilinear never bleeds into the neighbouring probe's tile. */
+    "  vec2 ouv = oct_enc(R);\n"
+    "  float tr = u_refl_tile_res / exp2(ceil(lod));\n"
+    "  float c = 0.5 / max(tr, 2.0);\n"
+    "  ouv = clamp(ouv, vec2(c), vec2(1.0 - c));\n"
+    "  w = bw;\n"
+    "  return textureLod(u_refl_atlas, t1.xy + ouv * t1.zw, lod);\n"
+    "}\n"
     "void main() {\n"
     /* OVERDRAW debug (mode 11): emit a small constant and bail BEFORE any shading.
      * Drawn with additive blend + GL_ALWAYS depth (see render_forward), so the
@@ -920,8 +967,19 @@ static const char *const PBR_FS =
      * drive the WHOLE PBR response, not just diffuse. (kS/kD/Rspec above.) */
     "  vec3 irr = u_gi_probe_gain*gi_dyn + sgw*gi_stat;\n"
     "  vec3 prefiltered = gi_probe_specular(v_world_pos, N, Rspec, rough);\n"
+    /* Sparse cubemap reflection probes (rpg-akwc), split-sum: rgb is the
+     * prefiltered radiance, alpha the baked SDF specular occlusion; the
+     * cavity term (surface ao x roughness) modulates the ridges. The SG
+     * probe specular fills wherever no cubemap reaches, itself modulated by
+     * the local probe ao + the same cavity, so the sparse set never seams. */
+    "  float cav = refl_cavity(ao, rough, NoV);\n"
+    "  float refl_w; float refl_pao;\n"
+    "  vec4 refl_s = gi_refl_sample(v_world_pos, Rspec, rough, refl_w,\n"
+    "                               refl_pao);\n"
+    "  vec3 sg_spec = prefiltered * cav * mix(1.0, refl_pao, refl_w);\n"
+    "  vec3 refl_spec = refl_s.rgb * refl_s.a * cav * u_refl_gain;\n"
     "  vec3 diff_ibl = kD * albedo * irr / PI;\n"
-    "  vec3 spec_ibl = kS * prefiltered;\n"
+    "  vec3 spec_ibl = kS * mix(sg_spec, refl_spec, refl_w);\n"
     "  if(u_debug_mode==7){ frag=vec4(irr,1.0); return; }\n"
     "  if(u_debug_mode==10){ frag=vec4(spec_ibl*ao_o,1.0); return; }\n"
     "  ambient += (diff_ibl + spec_ibl) * ao_o;\n"

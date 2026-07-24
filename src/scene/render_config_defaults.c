@@ -82,6 +82,12 @@ void render_config_defaults(render_config_t *rc)
     rc->static_baked_w = 0.35f; rc->static_dyn_w = 3.0f;
     rc->static_k = 1.0f; rc->spec_gain = 1.0f;
     rc->gi_probe_gain = 1.0f;           /* probe diffuse ambient at unity. */
+    rc->refl_enabled = 1;               /* bind .rprobe when present. */
+    rc->refl_spacing = 12.0f;           /* sparse vs ~1 m irradiance probes. */
+    rc->refl_tile = 32u;
+    rc->refl_mips = 4u;
+    rc->refl_gain = 1.0f;
+    rc->refl_range = 0.0f;              /* 0 = derive from spacing. */
     rc->sky_ao_color[0] = 0.15390f * 0.25f;
     rc->sky_ao_color[1] = 0.18851f * 0.25f;
     rc->sky_ao_color[2] = 0.25879f * 0.25f;

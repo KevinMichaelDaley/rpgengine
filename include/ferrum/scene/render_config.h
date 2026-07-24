@@ -109,6 +109,14 @@ typedef struct render_config {
 
     /* GI static/irradiance/spec/sky-AO weights. */
     float    static_baked_w, static_dyn_w, static_k, spec_gain;
+    /* Sparse cubemap reflection probes (rpg-akwc). */
+    int      refl_enabled;          /**< load/bind the .rprobe sidecar. */
+    float    refl_spacing;          /**< bake: probe grid spacing (m). */
+    uint32_t refl_tile;             /**< bake: octa tile edge at mip 0. */
+    uint32_t refl_mips;             /**< bake: filtered mip levels. */
+    float    refl_gain;             /**< shader gain on the cubemap term. */
+    float    refl_range;            /**< influence radius (0 = spacing*1.2). */
+
     float    gi_probe_gain;         /**< runtime gain on the probe (dynamic-set)
                                      *   diffuse ambient -- the ONLY lever over
                                      *   baked/frozen probe SH scenes. Default 1. */

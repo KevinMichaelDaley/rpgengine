@@ -191,6 +191,10 @@ static void fwd_forward_submit(void *ud)
         shader_uniform_set_int(&f->cache, &f->pbr, "u_brick_meta", 32);
         shader_uniform_set_int(&f->cache, &f->pbr, "u_brick_pidx", 33);
         shader_uniform_set_int(&f->cache, &f->pbr, "u_probe_valid", 34);
+        /* Reflection-probe samplers (rpg-akwc): unit 35 + 41, count 0. */
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_refl_atlas", 35);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_refl_meta", 41);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_refl_count", 0);
     }
 
     /* Frustum-cull the forward pass against the camera (rpg-0rs4). draw_distance
