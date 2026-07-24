@@ -78,3 +78,13 @@ skips, REFL_SPACING overrides). Known v1 limits, follow-up material:
   + emissive: no textures, no per-fragment shadows, no probe-SH bounce.
 - fragment probe pick is an O(count<=128) loop; fine at 25-64 probes,
   needs a froxel/brick index if counts grow.
+
+## v2 (same day): full-forward bake + visibility
+- The cubemap bake now renders every face through the REAL forward
+  pipeline (refl_bake_params_t.render_fn -> render_world_update with the
+  bake FBO as target): shadows, lightmaps, GI, glass -- true mirror
+  source data. Gamma inverted at readback; 2x supersampled faces.
+- Probe selection is visibility-weighted: per-probe octahedral RG
+  (mean, mean^2) radial-depth atlas baked from the face depth buffers,
+  Chebyshev-tested per fragment (u_refl_depth, unit 42, RFP2 format).
+  Kills through-wall probe leaks; the SG fallback covers rejected areas.
