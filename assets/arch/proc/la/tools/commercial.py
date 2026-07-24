@@ -591,7 +591,8 @@ def _flight_railing(shell, x0, x1, y_base, y_top, z_base, z_top, foot_hi,
         # cap buried inside the pitched bar) and runs level onto the deck.
         yl0 = y_top - ydir * over
         yl1 = y_top + ydir * landing
-        _sloped_bar(shell, cx, hw, yl0, zb1, yl1, zb1, rail_t, M_METAL)
+        _sloped_bar(shell, cx, hw - 0.003, yl0, zb1, yl1, zb1, rail_t,
+                    M_METAL)
     shell.tag = keep
 
 
@@ -1180,7 +1181,7 @@ def build_minimall(p, rng):
             # rear slab OVERLAPS the front slab 60 mm with 4 mm z-insets
             # (butted boxes shared faces -> non-manifold), and its far end
             # tucks inside the rear wall.
-            _box(shell, (b0 + 0.05, wt + 0.06, Z_FAS - 0.16),
+            _box(shell, (b0 + 0.05, wt + 0.054, Z_FAS - 0.16),
                  (b1 - 0.05, wy0, Z_FAS + 0.02), M_CONCRETE)
             _box(shell, (wx1 + 0.06, wy0 - 0.06, Z_FAS - 0.156),
                  (b1 - 0.055, dep9 + 0.03, Z_FAS + 0.016), M_CONCRETE)
@@ -1192,8 +1193,8 @@ def build_minimall(p, rng):
                         Z_OHED - 0.12, 0.09, None, M_STUCCO)
             _wall_solid(shell, 'y', b1 - 0.15, wt + 0.06, dep9 + 0.04, 0.0,
                         Z_OHED - 0.12, 0.09, None, M_STUCCO)
-            _wall_solid(shell, 'x', dep9, b0 + 0.10, b1 - 0.11, 0.0,
-                        Z_OHED - 0.12, 0.09, None, M_STUCCO)
+            _wall_solid(shell, 'x', dep9, b0 + 0.10, b1 - 0.11, -0.004,
+                        Z_OHED - 0.124, 0.09, None, M_STUCCO)
             shell.tag = 'steps'
             _flight_straight(shell, wx0, wx1, 1.0, 1.0 + run9,
                              0.0, Z_FAS - 0.14, 0.0, 0.14)
@@ -2052,15 +2053,15 @@ def build_minimall(p, rng):
         _box(lot, (a0 + 0.002, -cd - 0.45, 0.0),
              (apx1, -1.602, 0.14), M_CONCRETE)         # anchor entry apron
     if corner:
-        _box(lot, (Wm - cd - 0.45, -Wy, 0.0),
+        _box(lot, (Wm - cd - 0.45, -Wy, 0.012),
              (Wm - 0.002, -cd - 0.452, 0.14), M_CONCRETE)
     for xa in xarms:
         fx = xa['fx']
         if xa['face'] == 'e':
-            _box(lot, (fx + 0.002, -Wy, 0.0),
+            _box(lot, (fx + 0.002, -Wy, 0.012),
                  (fx + cd + 0.45, -cd - 0.452, 0.14), M_CONCRETE)
         else:
-            _box(lot, (fx - cd - 0.45, -Wy, 0.0),
+            _box(lot, (fx - cd - 0.45, -Wy, 0.012),
                  (fx - 0.002, -cd - 0.452, 0.14), M_CONCRETE)
     # ---- parking: 0-3 rows, perpendicular / angled / parallel / minimal.
     # STRIPES ARE FACES OF THE LOT MESH (thin quad islands 2 mm above the
@@ -2096,8 +2097,9 @@ def build_minimall(p, rng):
             lot.tag = 'lot'
             for si in range(n2):
                 sx = sx_first + si * pitch + pitch / 2.0
-                _box(lot, (sx - 0.85, hy - 0.75, 0.051),
-                     (sx + 0.85, hy - 0.60, 0.16), M_CONCRETE)  # wheel stop
+                _box(lot, (sx - 0.85, hy - 0.75, 0.040),
+                     (sx + 0.85, hy - 0.60, 0.16), M_CONCRETE)  # wheel stop,
+                #      seated 10 mm INTO the slab (a 1 mm hover z-fights)
 
     has_lot = rows > 0 or style in ('parallel', 'minimal')
     if has_lot:
@@ -2237,9 +2239,9 @@ def build_minimall(p, rng):
         _peak_wall(ash, axl, apk[0], apk[1], axc, 0.18, zA_par,
                    zA_par + 1.15, t, lambda u, d2, z: (u, AF + d2, z))
         if interior_on:
-            e = 0.001
+            e = -0.02      # embed the slab edges INTO the wall thickness
             ash.tag = 'slabs'
-            _box(ash, (ax0 + wt + e, AF + wt + e, 0.0),
+            _box(ash, (ax0 + wt + e, AF + wt + e, -0.004),
                  (ax1 - wt - e, D - wt - e, 0.12), M_CONCRETE)
             _box(ash, (ax0 + wt + e, AF + wt + e, zA_roof - 0.12),
                  (ax1 - wt - e, D - wt - e, zA_roof - 0.002), M_CONCRETE)

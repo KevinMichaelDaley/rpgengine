@@ -794,8 +794,8 @@ def build_dingbat(p, rng):
                 for t7 in (0.06, 0.5, 0.94):
                     yp = y_from + (y_to - y_from) * t7
                     zp = z_from + (z_to - z_from) * t7
-                    _box(stair, (xs - 0.021, yp - 0.021, zp - 0.05),
-                         (xs + 0.021, yp + 0.021, zp + 0.88), M_METAL)
+                    _box(stair, (xs - 0.017, yp - 0.017, zp - 0.05),
+                         (xs + 0.017, yp + 0.017, zp + 0.88), M_METAL)
             stair.tag = 'steps'
 
         land_y0 = None

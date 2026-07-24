@@ -606,7 +606,7 @@ class _Wall:
                             _hexa(self.s, self.o, self.u, self.n,
                                   ut, ut + 0.044,
                                   -recess * 0.46, -recess * 0.30,
-                                  fz0 + e2, fz1 - e2, M_METAL)
+                                  fz0 + 0.004, fz1 - 0.004, M_METAL)
                         span = (fu1 - 0.10) - (fu0 + 0.10)
                         for si4 in range(1, nseg):
                             zj = fz0 + e2 + step * si4 - rib * 0.5
@@ -614,7 +614,7 @@ class _Wall:
                                 pa = fu0 + 0.10 + (span - 0.10) * kp / 2.0
                                 _hexa(self.s, self.o, self.u, self.n,
                                       pa, pa + 0.10,
-                                      -recess * 0.185, -recess * 0.10,
+                                      -recess * 0.16, -recess * 0.08,
                                       zj - 0.045, zj + 0.045, M_METAL)
                         ucn = (fu0 + fu1) * 0.5
                         _hexa(self.s, self.o, self.u, self.n,

@@ -93,7 +93,7 @@ def _bulkhead(sh, spans, yw, bh, style, tile):
             _box(sh, (sa + 0.004, yw - 0.036, bh * 0.45),
                  (sb - 0.004, yw - 0.022, bh * 0.45 + 0.02), M_TRIM)
         _box(sh, (sa - 0.004, yw - 0.040, bh - 0.005),
-             (sb + 0.004, yw + 0.03, bh + 0.045), M_METAL)       # sill
+             (sb + 0.004, yw + 0.036, bh + 0.045), M_METAL)      # sill
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +169,7 @@ def emit_storefront_bay(sh, x0, x1, yw, door, head, bulkhead=0.62,
         if not on:
             continue
         px0 = (x0 - pw - 0.004) if side == 'L' else (x1 + 0.004)
-        _box(sh, (px0, yw - 0.034, 0.0), (px0 + pw, yw + 0.03, head + 0.02),
+        _box(sh, (px0, yw - 0.034, 0.0), (px0 + pw, yw + 0.045, head + 0.02),
              M_TRIM)
         if bulkhead_style == 'checker':
             _tile_checker(sh, px0 + 0.006, px0 + pw - 0.006, 0.03,
@@ -206,9 +206,9 @@ def emit_storefront_bay(sh, x0, x1, yw, door, head, bulkhead=0.62,
                 mx = sa + (sb - sa) * k / n
                 _box(sh, (mx - 0.026, yw - 0.036, bulkhead + 0.02),
                      (mx + 0.026, yw + 0.09, head - 0.02), M_METAL)
-    if glazing != 'plate':                          # transom bar
-        _box(sh, (x0 + 0.005, yw - 0.036, transom - 0.028),
-             (x1 - 0.005, yw + 0.09, transom + 0.028), M_METAL)
+    if glazing != 'plate':                          # transom bar: 3 mm
+        _box(sh, (x0 + 0.005, yw - 0.033, transom - 0.028),   # inside the
+             (x1 - 0.005, yw + 0.087, transom + 0.028), M_METAL)  # mullions
     _box(sh, (x0 - 0.006, yw - 0.042, head - 0.055),
          (x1 + 0.006, yw + 0.03, head + 0.015), M_METAL)         # head
 
@@ -219,8 +219,8 @@ def emit_storefront_bay(sh, x0, x1, yw, door, head, bulkhead=0.62,
         # door_leaf is set (the standalone bay); the mini-mall hangs its
         # leafs from the _Wall doorL fill instead.
         (d0, d1) = door
-        for fx in (d0 + 0.004, d1 - 0.059):
-            _box(sh, (fx, yw - 0.032, 0.0), (fx + 0.055, yw + 0.084,
+        for fx in (d0 + 0.008, d1 - 0.063):
+            _box(sh, (fx, yw - 0.032, 0.004), (fx + 0.055, yw + 0.084,
                  transom - 0.03), M_METAL)
         _box(sh, (d0 + 0.044, yw - 0.030, transom - 0.085),
              (d1 - 0.044, yw + 0.077, transom - 0.032), M_METAL)
@@ -320,8 +320,8 @@ def build_storefront_bay(p, rng):
     _box(sh, (-0.24, 0.024, head - 0.045), (w + 0.24, 0.20, top), M_TRIM)
     # side columns: inset planes + tops embedded 30 mm INTO the band (flush
     # shared planes put their corners on the band edges -> T-junctions).
-    _box(sh, (-0.234, 0.030, -0.02), (-0.015, 0.194, head - 0.012), M_TRIM)
-    _box(sh, (w + 0.015, 0.030, -0.02), (w + 0.234, 0.194, head - 0.012),
+    _box(sh, (-0.234, 0.030, -0.02), (-0.022, 0.194, head - 0.012), M_TRIM)
+    _box(sh, (w + 0.022, 0.030, -0.02), (w + 0.234, 0.194, head - 0.012),
          M_TRIM)
     if ru != 'closed':
         # shop cavity: floor / ceiling / back / side reveals (dark), giving
@@ -331,11 +331,11 @@ def build_storefront_bay(p, rng):
              M_CONCRETE)                            # floor
         _box(sh, (-0.02, 0.015, head - 0.015), (w + 0.02, 0.92, head + 0.04),
              M_GYPSUM)                              # ceiling
-        _box(sh, (-0.02, 0.86, -0.03), (w + 0.02, 0.96, head + 0.02),
+        _box(sh, (-0.014, 0.86, -0.03), (w + 0.014, 0.96, head + 0.02),
              M_GYPSUM)                              # back wall
-        _box(sh, (-0.048, 0.015, -0.03), (-0.012, 0.90, head + 0.015),
+        _box(sh, (-0.048, 0.022, -0.024), (-0.012, 0.90, head + 0.008),
              M_GYPSUM)
-        _box(sh, (w + 0.012, 0.015, -0.03), (w + 0.048, 0.90, head + 0.015),
+        _box(sh, (w + 0.012, 0.022, -0.024), (w + 0.048, 0.90, head + 0.008),
              M_GYPSUM)
         sh.tag = 'storefront'
 

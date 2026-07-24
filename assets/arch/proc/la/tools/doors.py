@@ -81,12 +81,16 @@ def emit_glass_leaf(sh, origin, u_dir, outward, u0, u1, z0, z1,
     _hexa(sh, base, ev, ew, 0.0, _STILE, -_GLASS_T, 0.0, 0.0, ht, M_METAL)
     _hexa(sh, base, ev, ew, wd - _STILE, wd, -_GLASS_T, 0.0, 0.0, ht,
           M_METAL)
-    rv0, rv1 = _STILE - 0.012, wd - _STILE + 0.012     # embedded 12 mm
-    _hexa(sh, base, ev, ew, rv0, rv1, -_GLASS_T, 0.0,
+    # rails embed 12 mm into the stiles and step 3 mm behind BOTH leaf
+    # faces -- a flush rail would share the stiles' front/back planes
+    # along the embed strip (coplanar-overlap z-fight).
+    rv0, rv1 = _STILE - 0.012, wd - _STILE + 0.012
+    rw0, rw1 = -_GLASS_T + 0.003, -0.003
+    _hexa(sh, base, ev, ew, rv0, rv1, rw0, rw1,
           ht - _STILE, ht - 0.002, M_METAL)                # top rail
-    _hexa(sh, base, ev, ew, rv0, rv1, -_GLASS_T, 0.0,
+    _hexa(sh, base, ev, ew, rv0, rv1, rw0, rw1,
           mz0, mz1, M_METAL)                               # mid rail
-    _hexa(sh, base, ev, ew, rv0, rv1, -_GLASS_T, 0.0,
+    _hexa(sh, base, ev, ew, rv0, rv1, rw0, rw1,
           0.002, _KICK, M_METAL)                           # kick rail
     gv0, gv1 = _STILE + 0.001, wd - _STILE - 0.001
     _pane(sh, base, ev, ew, gv0, gv1, -_GLASS_T * 0.5,
@@ -126,8 +130,8 @@ def emit_man_door(sh, origin, u_dir, outward, u0, u1, z0, z1,
           0.012, 0.26, M_METAL)                            # kick plate
     _hexa(sh, base, ev, ew, wd - 0.105, wd - 0.055, -0.012, 0.046,
           0.985, 1.035, M_METAL)                           # knob shank+rose
-    _hexa(sh, base, ev, ew, wd - 0.125, wd - 0.035, 0.046, 0.084,
-          0.972, 1.048, M_METAL)                           # knob head
+    _hexa(sh, base, ev, ew, wd - 0.125, wd - 0.035, 0.042, 0.084,
+          0.972, 1.048, M_METAL)                           # knob head, embedded
     for hz in (0.16, ht * 0.5, ht - 0.24):
         _hexa(sh, base, ev, ew, -0.014, 0.020, -0.058, -0.036,
               hz, hz + 0.11, M_METAL)                      # hinge knuckle
@@ -150,7 +154,7 @@ def emit_door_frame(sh, origin, u_dir, outward, u0, u1, z0, z1, depth,
     for ua, ub in ((u0 - 0.020, u0 + 0.040), (u1 - 0.040, u1 + 0.020)):
         _hexa(sh, o, eu, n, ua, ub, -d1, -d0, z0 + 0.002, z1 + 0.020, mat)
     _hexa(sh, o, eu, n, u0 + 0.020, u1 - 0.020, -d1 + 0.002, -d0 - 0.002,
-          z1 - 0.020, z1 + 0.016, mat)                     # head, embedded
+          z1 - 0.022, z1 + 0.010, mat)                     # head, embedded
     for ua, ub in ((u0 + 0.024, u0 + 0.056), (u1 - 0.056, u1 - 0.024)):
         _hexa(sh, o, eu, n, ua, ub, -stop - 0.016, -stop + 0.016,
               z0 + 0.010, z1 - 0.028, mat)                 # stop ribs
@@ -170,7 +174,7 @@ def glass_leaf_filler(rng, ajar_frac, double_min=1.35, frame=True):
         o, u, n = tuple(wall.o), tuple(wall.u), tuple(wall.n)
         if frame:
             emit_door_frame(sh, o, u, n, u0, u1, z0, z1, depth)
-        d_leaf = min(max(depth - 0.02, 0.03), 0.07)
+        d_leaf = min(max(depth - 0.026, 0.03), 0.066)
         if (u1 - u0) >= double_min:
             mid = (u0 + u1) * 0.5
             emit_glass_leaf(sh, o, u, n, u0, mid + 0.006, z0, z1,
@@ -193,6 +197,6 @@ def man_door_filler(rng, ajar_frac, frame=True):
             emit_door_frame(sh, o, u, n, u0, u1, z0, z1, depth)
         ang = rng.uniform(0.15, 0.85) if rng.random() < ajar_frac else 0.0
         emit_man_door(sh, o, u, n, u0, u1, z0, z1,
-                      depth=min(max(depth - 0.02, 0.03), 0.07),
+                      depth=min(max(depth - 0.026, 0.03), 0.066),
                       ajar=ang, hinge_right=rng.random() < 0.5)
     return cb

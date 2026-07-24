@@ -172,10 +172,23 @@ def emit_railing_path(sh, pts, z0=0.0, height=1.0, spacing=0.125,
                   M_METAL)
     zp0 = z_bot - rail_h * 0.5 + 0.012
     zp1 = z_top + rail_h * 0.5 - 0.012
+    # every post position (corners + spaced): pickets whose station lands
+    # against a post face (within ~1 mm) z-fight its side planes -- skip
+    # them, the post reads as the picket at that station anyway.
+    post_pts = list(pts)
+    for (ax, ay, bx, by, L, n_p) in seg_info:
+        n_po = int(L / post_every)
+        for k in range(1, n_po + 1):
+            t = k * post_every / L
+            if t <= 0.94:
+                post_pts.append((ax + (bx - ax) * t, ay + (by - ay) * t))
     for (ax, ay, bx, by, L, n_p) in seg_info:      # pickets per segment
         for k in range(1, n_p):
             px = ax + (bx - ax) * k / n_p
             py = ay + (by - ay) * k / n_p
+            if any(_m.hypot(px - qx, py - qy) < 0.042
+                   for (qx, qy) in post_pts):
+                continue
             _box(sh, (px - size * 0.5, py - size * 0.5, zp0),
                  (px + size * 0.5, py + size * 0.5, zp1), M_METAL)
             if style == 'collars':
@@ -185,7 +198,7 @@ def emit_railing_path(sh, pts, z0=0.0, height=1.0, spacing=0.125,
                      (px + c * 0.5, py + c * 0.5, zc + c * 0.6), M_METAL)
     pw = 0.05
     for (px, py) in pts:                           # corner + end posts
-        _box(sh, (px - pw * 0.5, py - pw * 0.5, z0),
+        _box(sh, (px - pw * 0.5, py - pw * 0.5, z0 - 0.008),
              (px + pw * 0.5, py + pw * 0.5, z0 + height + 0.025), M_METAL)
     for (ax, ay, bx, by, L, n_p) in seg_info:      # intermediate posts
         n_po = int(L / post_every)
@@ -194,7 +207,7 @@ def emit_railing_path(sh, pts, z0=0.0, height=1.0, spacing=0.125,
             if t > 0.94:
                 continue
             px, py = ax + (bx - ax) * t, ay + (by - ay) * t
-            _box(sh, (px - pw * 0.5, py - pw * 0.5, z0),
+            _box(sh, (px - pw * 0.5, py - pw * 0.5, z0 - 0.008),
                  (px + pw * 0.5, py + pw * 0.5, z0 + height + 0.025),
                  M_METAL)
     sh.tag = keep
@@ -935,9 +948,10 @@ def build_blade_sign(p, rng):
              M_TRIM)
         _box(sh, (P * 0.45 + 0.02, ys, z0 - 0.012), (P - 0.02, ye, z0 + 0.06),
              M_TRIM)
-        _box(sh, (P * 0.45 - 0.012, ys, z0 + 0.02), (P * 0.45 + 0.05, ye,
+        ysv, yev = (ys + 0.003, ye - 0.003) if ye - ys > 0.006 else (ys, ye)
+        _box(sh, (P * 0.45 - 0.012, ysv, z0 + 0.02), (P * 0.45 + 0.05, yev,
              z1 - 0.02), M_TRIM)
-        _box(sh, (P - 0.05, ys, z0 + 0.02), (P + 0.012, ye, z1 - 0.02),
+        _box(sh, (P - 0.05, ysv, z0 + 0.02), (P + 0.012, yev, z1 - 0.02),
              M_TRIM)
     np_ = p["panels"]
     for k in range(np_):                           # stacked letter panels
