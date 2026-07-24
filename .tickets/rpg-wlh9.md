@@ -51,3 +51,14 @@ Related: [[rpg-akwc]] (base feature), [[rpg-th87]].
   state bugs and still showed nothing on glass).
 - Grid must be DENSE (~2-3 m). Good results are impossible with a
   sparse set.
+
+## Working end-to-end (2026-07-24, 422202ce..)
+Bake-mode capture + chunk-streamed grids live on both scenes:
+- gh_dyn: 181 probes / 12 chunks; hall reflects, openness-scaled ambient
+  keeps enclosed stone dry.
+- la_sprawl: 51/51 chunks (after the sparse-numbering scan fix),
+  293 MB of RFP3 sidecars at 3 m / 64 px; storefront glass mirrors the
+  street at 13.7 ms/f.
+Follow-ups: sidecar size (48 px tiles or BC6-style packing), neighbor-
+cell candidates at index-cell boundaries, per-face parallax refinement,
+and the mip-filter shape KMD flagged.
