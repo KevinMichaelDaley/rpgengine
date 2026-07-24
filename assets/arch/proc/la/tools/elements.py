@@ -508,7 +508,7 @@ def build_factory_window(p, rng):
     for z in gz[1:-1]:                             # horizontals, through
         st = [(ix0 - 0.03, z)] + [(x, z) for x in gx[1:-1]] + \
              [(ix1 + 0.03, z)]
-        _bar(sh, st, m, m, M_METAL, axis='x')
+        _bar(sh, st, m - 0.005, m - 0.005, M_METAL, axis='x')
 
     def _shatter_rect(sx0, sx1, sz0, sz1, shared):
         """Knife ONE jagged star-shaped hole out of rect [sx0,sx1]x[sz0,sz1]:
@@ -1592,7 +1592,8 @@ def build_canvas_awning(p, rng):
     for (x0, x1) in ((0.0, 0.04), (W - 0.04, W)):  # sheared side arms
         _sheared_box(sh, x0, x1, -0.005, -D + 0.03, -0.035, -drop - 0.012,
                      0.05, M_METAL)
-    _bar(sh, [(x, -drop - 0.012) for x in xs], 0.045, 0.045, M_METAL,
+    xbar = [0.004] + xs[1:-1] + [W - 0.004]        # end caps INSIDE the arms
+    _bar(sh, [(x, -drop - 0.012) for x in xbar], 0.045, 0.045, M_METAL,
          axis='x', center=-D + 0.035)              # front tube, per-stripe rings
     return [sh.to_object("LA_Elem_CanvasAwning",
                          [_material(n) for n in _MATS])]

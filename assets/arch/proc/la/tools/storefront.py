@@ -192,7 +192,7 @@ def emit_storefront_bay(sh, x0, x1, yw, door, head, bulkhead=0.62,
         return
     for (sa, sb) in spans:                          # glazing frame
         if glazing == 'plate':
-            for mx in (sa + 0.02, sb - 0.02):       # end bars only
+            for mx in (sa + 0.028, sb - 0.028):       # end bars only
                 _box(sh, (mx - 0.024, yw - 0.034, bulkhead + 0.02),
                      (mx + 0.024, yw + 0.09, head - 0.02), M_METAL)
             n = max(1, int(round((sb - sa) / 1.9)))
@@ -394,7 +394,7 @@ def build_storefront_bay(p, rng):
                             tile=p["tile"], glass=True,
                             bulkhead_style=p["bulkhead_style"],
                             glazing=p["glazing"], door_dressing=False)
-        emit_rollup(sh, d0 + 0.07, d1 - 0.07, -0.012,
+        emit_rollup(sh, d0 + 0.078, d1 - 0.078, -0.012,
                     min(2.2, head - 0.35) + 0.42, open_frac=0.0,
                     housing=True, z0=0.02)
         # security is a whole-tenant decision: nobody rolls steel over
@@ -412,7 +412,7 @@ def build_storefront_bay(p, rng):
                             door_ajar=p["door_ajar"] * 1.2)
         if ru == 'half':
             # raised curtain in front of the glazing, inside the opening.
-            emit_rollup(sh, 0.085, w - 0.085, -0.062, head - 0.085,
+            emit_rollup(sh, 0.085, w - 0.085, -0.066, head - 0.085,
                         open_frac=0.6, housing=True, z0=bh + 0.03)
 
     if p["bars"] and ru in ('none', 'half'):
@@ -427,7 +427,7 @@ def build_storefront_bay(p, rng):
                 emit_security_bars(sh, g0, g1, 0.0, bh + 0.10,
                                    head - 0.14)
         if door is not None and ru == 'none':
-            emit_rollup(sh, door[0] + 0.07, door[1] - 0.07, -0.012,
+            emit_rollup(sh, door[0] + 0.078, door[1] - 0.078, -0.012,
                         min(2.2, head - 0.35) + 0.42, open_frac=0.75,
                         housing=True, z0=0.02)
 

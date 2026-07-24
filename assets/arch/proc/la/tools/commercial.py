@@ -1134,7 +1134,7 @@ def build_minimall(p, rng):
                     if g1b - g0b > 0.30:
                         emit_security_bars(shell, g0b, g1b, 0.0,
                                            bh9 + 0.10, Z_SF - 0.14)
-                emit_rollup(shell, d0b + 0.07, d1b - 0.07, -0.012,
+                emit_rollup(shell, d0b + 0.078, d1b - 0.078, -0.012,
                             min(2.2, Z_SF - 0.35) + 0.42,
                             open_frac=0.75 if rng.random() < 0.6 else 0.0,
                             housing=True, z0=0.02)
