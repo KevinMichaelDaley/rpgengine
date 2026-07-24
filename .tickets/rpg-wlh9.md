@@ -40,3 +40,14 @@ assets, not a whole-level sidecar.
   full-pipeline face render debug in progress, REFL_DUMP).
 
 Related: [[rpg-akwc]] (base feature), [[rpg-th87]].
+
+## Direction update (KMD, 2026-07-24)
+- Reflection probes MUST stream through the SAME visibility-gated
+  chunking system as the SDF/probesh -- they are simply another per-chunk
+  probe grid. No whole-level sidecar, no live-client bake hook.
+- Cubemap capture moves into the CLIENT'S BAKE MODE (--bake): render the
+  lm mesh set directly (self-contained GL, no live-pipeline state
+  hazards -- the live-path attempt burned a day on viewport/clear/stale
+  state bugs and still showed nothing on glass).
+- Grid must be DENSE (~2-3 m). Good results are impossible with a
+  sparse set.
