@@ -139,7 +139,8 @@ bool refl_bake_chunks(const gl_loader_t *loader,
             mx[a] = ch->origin[a] + (float)ch->dims[a] * ch->voxel;
         }
         char out[576];
-        snprintf(out, sizeof out, "%s_c%03u.rprobe", sdf_prefix, c);
+        snprintf(out, sizeof out, "%s_c%03u.rprobe", sdf_prefix,
+                 (unsigned)cs.file_no[c]);
         prm.place_min = mn;
         prm.place_max = mx;
         prm.out_path = out;
@@ -151,10 +152,11 @@ bool refl_bake_chunks(const gl_loader_t *loader,
         if (refl_bake_run(loader, NULL, sdf_prefix, &prm))
             baked_chunks += 1u;
     }
+    uint32_t n_chunks = cs.count;
     refl_lm_destroy(&set);
     refl_bake_destroy(&rb);
     probe_chunk_sdf_close(&cs);
     fprintf(stderr, "refl_bake: %u/%u chunks wrote .rprobe grids\n",
-            baked_chunks, cs.count);
+            baked_chunks, n_chunks);
     return baked_chunks > 0u;
 }

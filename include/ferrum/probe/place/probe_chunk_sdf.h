@@ -30,6 +30,8 @@ extern "C" {
 typedef struct probe_chunk_sdf {
     lm_sdf_data_t *chunks;   /**< [count] loaded chunk fields (owned). */
     uint32_t       count;    /**< loaded chunk count. */
+    uint32_t      *file_no;  /**< [count] source _cNNN index (numbering is
+                              *   sparse; sidecars must reuse it). */
 } probe_chunk_sdf_t;
 
 /**

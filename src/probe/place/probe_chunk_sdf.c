@@ -52,16 +52,25 @@ bool probe_chunk_sdf_open(const char *prefix, probe_chunk_sdf_t *out)
 
     lm_sdf_data_t *chunks = malloc((size_t)CHUNK_SDF_MAX * sizeof(lm_sdf_data_t));
     if (chunks == NULL) return false;
+    uint32_t *file_no = malloc((size_t)CHUNK_SDF_MAX * sizeof(uint32_t));
+    if (file_no == NULL) { free(chunks); return false; }
     uint32_t n = 0;
-    for (int i = 0; i < CHUNK_SDF_MAX; ++i) {
+    /* Chunk numbering is SPARSE (empty cells skip an index): scan through
+     * gaps like the runtime streamer instead of stopping at the first
+     * miss, keeping each chunk's source file number for sidecar naming. */
+    int misses = 0;
+    for (int i = 0; i < 100000 && n < CHUNK_SDF_MAX && misses < 4096; ++i) {
         char path[512];
         snprintf(path, sizeof path, "%s_c%03d.sdf", prefix, i);
-        if (!lm_sdf_load(path, &chunks[n])) break;   /* first gap ends the scan. */
+        if (!lm_sdf_load(path, &chunks[n])) { ++misses; continue; }
+        misses = 0;
+        file_no[n] = (uint32_t)i;
         ++n;
     }
-    if (n == 0) { free(chunks); return false; }
+    if (n == 0) { free(chunks); free(file_no); return false; }
     out->chunks = chunks;
     out->count = n;
+    out->file_no = file_no;
     return true;
 }
 
@@ -88,5 +97,6 @@ void probe_chunk_sdf_close(probe_chunk_sdf_t *cs)
     if (cs == NULL) return;
     for (uint32_t i = 0; i < cs->count; ++i) lm_sdf_data_free(&cs->chunks[i]);
     free(cs->chunks);
+    free(cs->file_no);
     memset(cs, 0, sizeof *cs);
 }
