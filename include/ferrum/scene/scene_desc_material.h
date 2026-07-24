@@ -51,6 +51,7 @@ typedef struct scene_desc_material {
     float opacity;             /**< 1 = opaque; < 1 = translucent (glass). Parser
                                     clamps to [0,1]; drives the translucent-shadow
                                     mask + sorted transparency passes. */
+    float specular_strength;   /**< dielectric F0 scale (0.5 = 4 percent). */
 } scene_desc_material_t;
 
 #ifdef __cplusplus

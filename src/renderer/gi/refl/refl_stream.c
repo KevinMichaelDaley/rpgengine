@@ -28,7 +28,7 @@ bool refl_stream_init(refl_stream_t *rs, const gl_loader_t *loader,
         return false;
     memset(rs, 0, sizeof(*rs));
     rs->gain = 1.0f;
-    rs->range = 5.0f;
+    rs->range = 12.0f;
     if (loader == NULL || loader->get_proc_address == NULL ||
         slot_capacity == 0u || tile_res < 8u || mips == 0u ||
         mips > REFL_PROBE_MAX_MIPS)

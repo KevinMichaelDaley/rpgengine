@@ -681,7 +681,7 @@ class _Wall:
 _MAT_PBR = {
     "la_stucco":       ((0.74, 0.70, 0.62), 0.90, 0.0),
     "la_trim":         ((0.85, 0.83, 0.78), 0.55, 0.0),
-    "la_glass":        ((0.22, 0.52, 0.58), 0.08, 0.0, 0.35),   # teal plate glass: chromatic transmission
+    "la_glass":        ((0.22, 0.52, 0.58), 0.02, 0.0, 0.35, 1.5),  # teal plate glass: mirror-grade
     "la_concrete":     ((0.54, 0.54, 0.52), 0.85, 0.0),
     "la_metal":        ((0.62, 0.64, 0.66), 0.45, 1.0),
     "la_gypsum":       ((0.82, 0.80, 0.77), 0.95, 0.0),
@@ -712,6 +712,7 @@ def _material(name):
     if pbr is not None:
         (col, rough, metal) = pbr[:3]
         alpha = pbr[3] if len(pbr) > 3 else 1.0
+        spec = pbr[4] if len(pbr) > 4 else 0.5
         m.use_nodes = True
         bsdf = next((n for n in m.node_tree.nodes
                      if n.type == 'BSDF_PRINCIPLED'), None)
@@ -721,6 +722,8 @@ def _material(name):
             bsdf.inputs["Roughness"].default_value = rough
             bsdf.inputs["Metallic"].default_value = metal
             bsdf.inputs["Alpha"].default_value = alpha
+            if "Specular IOR Level" in bsdf.inputs:   # engine: specular_strength
+                bsdf.inputs["Specular IOR Level"].default_value = spec
         if alpha < 1.0:
             m.blend_method = 'BLEND'      # viewport reads as glass too
         m.diffuse_color = (col[0], col[1], col[2], alpha)

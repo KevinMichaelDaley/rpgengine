@@ -267,7 +267,12 @@ bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
          * then blitted into the RG atlas. */
         {
             const float zn = 0.05f, zf = 500.0f;
-            float dclamp = prm.spacing * 2.0f;
+            /* Radial depth feeds BOTH the Chebyshev visibility test and
+             * the sphere-parallax radius: clamping it at probe spacing
+             * crushed every reflection beyond ~6 m into a warped blob.
+             * Cubemaps are NOT distance limited -- clamp only at the far
+             * plane's order to keep fp16 variance sane. */
+            float dclamp = 300.0f;
             for (uint32_t f = 0; f < 6u; ++f)
                 for (uint32_t y = 0; y < prm.face_res; ++y)
                     for (uint32_t x = 0; x < prm.face_res; ++x) {

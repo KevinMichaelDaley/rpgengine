@@ -818,10 +818,16 @@ static const char *const PBR_FS =
     "  vec3 ic = (wp - u_refl_idx_origin) / u_refl_idx_cell;\n"
     "  if(any(lessThan(ic, vec3(0.0))) ||\n"
     "     any(greaterThanEqual(ic, u_refl_idx_dims))) return vec4(0.0);\n"
-    "  ivec3 ci = ivec3(ic);\n"
     "  ivec3 idim = ivec3(u_refl_idx_dims + vec3(0.5));\n"
-    "  int cell = ((ci.z * idim.y) + ci.y) * idim.x + ci.x;\n"
+    /* Gather over the 2x2x2 cell neighbourhood around the fragment so a
+     * probe just across a cell boundary is never missed. */
+    "  ivec3 cbase = ivec3(ic - vec3(0.5));\n"
     "  int best = -1; float bw = 0.0;\n"
+    "  for(int cz = 0; cz < 2; ++cz)\n"
+    "  for(int cy = 0; cy < 2; ++cy)\n"
+    "  for(int cx = 0; cx < 2; ++cx){\n"
+    "  ivec3 ci = clamp(cbase + ivec3(cx, cy, cz), ivec3(0), idim - 1);\n"
+    "  int cell = ((ci.z * idim.y) + ci.y) * idim.x + ci.x;\n"
     "  for(int k = 0; k < 4; ++k){\n"
     "    int i = texelFetch(u_refl_index, cell * 4 + k).r;\n"
     "    if(i < 0) break;\n"
@@ -848,7 +854,7 @@ static const char *const PBR_FS =
     "      }\n"
     "    }\n"
     "    if(wi > bw){ bw = wi; best = i; }\n"
-    "  }\n"
+    "  }}\n"
     "  if(best < 0 || bw <= 0.0) return vec4(0.0);\n"
     "  vec4 t0 = texelFetch(u_refl_meta, best*2+0);\n"
     "  vec4 t1 = texelFetch(u_refl_meta, best*2+1);\n"
@@ -1030,7 +1036,11 @@ static const char *const PBR_FS =
     "  vec4 refl_s = gi_refl_sample(v_world_pos, Rspec, rough, refl_w,\n"
     "                               refl_pao);\n"
     "  vec3 sg_spec = prefiltered * cav * mix(1.0, refl_pao, refl_w);\n"
-    "  vec3 refl_spec = refl_s.rgb * refl_s.a * cav * u_refl_gain;\n"
+    /* The baked alpha is SPECULAR OCCLUSION: on rough surfaces it damps
+     * cavity reflections, but a mirror must keep its image even when the
+     * probe hugs the wall it reflects -- blend the mask in by roughness. */
+    "  float refl_occ = mix(1.0, refl_s.a, clamp(rough * 1.5, 0.0, 1.0));\n"
+    "  vec3 refl_spec = refl_s.rgb * refl_occ * cav * u_refl_gain;\n"
     "  vec3 diff_ibl = kD * albedo * irr / PI;\n"
     "  vec3 spec_ibl = kS * mix(sg_spec, refl_spec, refl_w);\n"
     "  if(u_debug_mode==7){ frag=vec4(irr,1.0); return; }\n"

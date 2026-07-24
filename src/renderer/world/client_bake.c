@@ -13,6 +13,7 @@
 
 #include "ferrum/renderer/client_bake.h"
 #include "ferrum/renderer/gi/refl_bake.h"
+#include "ferrum/scene/render_config.h"
 #include "ferrum/scene/scene_desc.h"
 #include "ferrum/lightmap/lm_bake_driver.h"
 #include "ferrum/lightmap/lm_lightmap_file.h"
@@ -445,13 +446,32 @@ bool client_bake_run(const gl_loader_t *loader, const struct scene_desc *descp,
                 const char *et = getenv("REFL_TILE");
                 rp.spacing = es ? (float)atof(es) : 0.0f;
                 rp.tile_res = et ? (uint32_t)atoi(et) : 64u;
-                float sky[3] = { 0.30780f, 0.37700f, 0.51760f };
+                /* Match the LIVE forward's radiance units or reflections
+                 * come out an order of magnitude hot: the client scales
+                 * the sun by render.json sun_energy_scale and fills the
+                 * ambient from rc. */
+                render_config_t rrc;
+                render_config_defaults(&rrc);
+                {
+                    char rcp[576];
+                    snprintf(rcp, sizeof rcp, "%s/render.json", base_dir);
+                    static uint8_t rcbuf[64 * 1024];
+                    arena_t rca;
+                    arena_init(&rca, rcbuf, sizeof rcbuf);
+                    (void)render_config_load(rcp, &rca, &rrc);
+                }
+                lm_light_t rsun = ctx.sun;
+                rsun.color.x *= rrc.sun_energy_scale;
+                rsun.color.y *= rrc.sun_energy_scale;
+                rsun.color.z *= rrc.sun_energy_scale;
+                float sky[3] = { rrc.ambient[0], rrc.ambient[1],
+                                 rrc.ambient[2] };
                 uint32_t rn = 0u;
                 while (rn < desc->object_count &&
                        ctx.meshes[rn].positions != NULL)
                     rn += 1u;
                 (void)refl_bake_chunks(loader, ctx.meshes, rn,
-                                       ctx.have_sun ? &ctx.sun : NULL, sky,
+                                       ctx.have_sun ? &rsun : NULL, sky,
                                        sdfp, &rp);
             }
         }

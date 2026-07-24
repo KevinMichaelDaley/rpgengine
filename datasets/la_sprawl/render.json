@@ -31,5 +31,5 @@
  "dir_caustics": 1,
  "sun_energy_scale": 0.6,
  "gi_probe_gain": 1.3,
- "refl_gain": 3.0
+ "refl_gain": 1.0
 }
