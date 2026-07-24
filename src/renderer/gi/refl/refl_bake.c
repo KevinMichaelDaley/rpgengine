@@ -174,7 +174,7 @@ void refl_bake_probe(refl_bake_t *rb, const render_scene_t *scene,
                              1.0f);
             rb->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             prm->render_fn(prm->render_user, rb->fbo, view.m, proj.m, pos,
-                           rb->face_res, sun_vis);
+                           rb->face_res, sun_vis, prm->ambient);
             rb->glBindFramebuffer(GL_FRAMEBUFFER, rb->fbo);
             rb->glFinish();
             rb->glReadPixels(0, 0, (int32_t)rb->face_res,

@@ -188,10 +188,38 @@ bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
             ? refl_occl_cone_fn(sdf_fn, sdf_user, pr->pos, sd, 0.08f,
                                 120.0f)
             : 1.0f;
+        /* Sky openness at the probe: enclosed interiors must not bake the
+         * full outdoor ambient (that made every dungeon reflect like wet
+         * chrome). Cheap 16-direction upper-hemisphere cone estimate. */
+        float open_sum = 0.0f;
+        if (have_sdf) {
+            for (int oz = 0; oz < 4; ++oz)
+                for (int ox = 0; ox < 4; ++ox) {
+                    float uv2[2] = { ((float)ox + 0.5f) / 4.0f,
+                                     ((float)oz + 0.5f) / 4.0f };
+                    float d2[3];
+                    refl_octa_decode(uv2, d2);
+                    if (d2[1] < 0.0f)
+                        d2[1] = -d2[1];   /* fold into +y (up). */
+                    open_sum += refl_occl_cone_fn(sdf_fn, sdf_user,
+                                                  pr->pos, d2, 0.45f,
+                                                  prm.spacing * 4.0f);
+                }
+        } else {
+            open_sum = 16.0f;
+        }
+        float openness = open_sum / 16.0f;
+        refl_bake_params_t pprm = prm;
+        for (int a2 = 0; a2 < 3; ++a2) {
+            float amb_scale = 0.15f + 0.85f * openness;
+            pprm.ambient[a2] = prm.ambient[a2] * amb_scale;
+            pprm.sky[a2] = prm.sky[a2] * amb_scale;
+        }
         float *dfaces[6];
         for (uint32_t f = 0; f < 6u; ++f)
             dfaces[f] = dfaces_mem + (size_t)f * dface_n;
-        refl_bake_probe(&rb, scene, pr->pos, &prm, sun_vis, faces, dfaces);
+        refl_bake_probe(&rb, scene, pr->pos, &pprm, sun_vis, faces,
+                        dfaces);
         /* REFL_DUMP=1: write probe 0's six RAW faces (pre-octa, pre-gamma
          * inversion) as PPMs -- the ground truth of what the pipeline
          * callback actually rendered into the bake FBO. */

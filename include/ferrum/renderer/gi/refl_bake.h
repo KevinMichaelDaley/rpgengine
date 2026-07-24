@@ -53,7 +53,8 @@ typedef struct refl_bake_params {
      */
     void (*render_fn)(void *user, uint32_t fbo, const float view[16],
                       const float proj[16], const float eye[3],
-                      uint32_t face_res, float sun_vis);
+                      uint32_t face_res, float sun_vis,
+                      const float ambient[3]);
     void *render_user;    /**< passed through to render_fn. */
     /* Optional injected SDF sampler (placement / occlusion / sun-vis):
      * when NULL the run opens <sdf_prefix>_cNNN.sdf itself. */

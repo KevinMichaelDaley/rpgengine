@@ -29,7 +29,8 @@ struct refl_lm_ctx {
 
 static void lm_face_render(void *user, uint32_t fbo, const float view[16],
                            const float proj[16], const float eye[3],
-                           uint32_t face_res, float sun_vis)
+                           uint32_t face_res, float sun_vis,
+                           const float ambient[3])
 {
     (void)fbo;
     (void)eye;
@@ -55,7 +56,7 @@ static void lm_face_render(void *user, uint32_t fbo, const float view[16],
     shader_uniform_set_vec3(&rb->cache, &rb->shader, "u_sun_color",
                             c->sun_color);
     shader_uniform_set_vec3(&rb->cache, &rb->shader, "u_ambient",
-                            c->ambient);
+                            ambient != NULL ? ambient : c->ambient);
     shader_uniform_set_float(&rb->cache, &rb->shader, "u_sun_vis",
                              c->sun_vis);
     refl_lm_draw(c->set, rb, c->meshes);
