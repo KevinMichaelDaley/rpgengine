@@ -686,27 +686,6 @@ static bool client_img_load(const char *path, int *w, int *h, unsigned char **px
     return true;
 }
 
-/* rpg-akwc: render one reflection-probe cube face through the FULL client
- * pipeline (render_world_update: GI frame + shadow pre-passes + forward+).
- * The forward renders into fwd.target_fbo, so swap it to the bake FBO for
- * the face and restore the window target after. */
-static void refl_face_render(void *user, uint32_t fbo, const float view[16],
-                             const float proj[16], const float eye[3],
-                             uint32_t face_res)
-{
-    client_scene_t *csp = (client_scene_t *)user;
-    render_camera_t saved = csp->scene.camera;
-    uint32_t saved_fbo = csp->world.forward.target_fbo;
-    memcpy(csp->scene.camera.view, view, sizeof(float) * 16);
-    memcpy(csp->scene.camera.proj, proj, sizeof(float) * 16);
-    memcpy(csp->scene.camera.eye, eye, sizeof(float) * 3);
-    csp->world.forward.target_fbo = fbo;
-    glViewport(0, 0, (GLsizei)face_res, (GLsizei)face_res);
-    render_world_update(&csp->world, NULL, 0, (int)face_res, (int)face_res);
-    csp->world.forward.target_fbo = saved_fbo;
-    csp->scene.camera = saved;
-}
-
 int main(int argc, char **argv) {
     /* Self-contained Cornell-box lightmap demo: build + bake + render, no
      * server. Usage: demo_client --cornell [screenshot.ppm] [seconds] */
@@ -1514,35 +1493,6 @@ int main(int argc, char **argv) {
                 bool ok = gi_runtime_bake_write_probesh(&cs.world.gi, g_bake_prefix);
                 fprintf(stderr, "[client] --bake-probes: %s (%s)\n",
                         ok ? "wrote per-chunk .probesh" : "FAILED", g_bake_prefix);
-                /* Sparse cubemap reflection probes (rpg-akwc): bake the
-                 * .rprobe sidecar in the same pass -- the scene, sun and
-                 * chunked SDF are all resident here. CLIENT_BAKE_REFL=0
-                 * skips; REFL_SPACING overrides the render.json default. */
-                const char *er = getenv("CLIENT_BAKE_REFL");
-                if (er == NULL || atoi(er) != 0) {
-                    refl_bake_params_t rp;
-                    memset(&rp, 0, sizeof rp);
-                    const char *es = getenv("REFL_SPACING");
-                    rp.spacing = es ? (float)atof(es) : 0.0f;
-                    const char *et = getenv("REFL_TILE");
-                    rp.tile_res = et ? (uint32_t)atoi(et) : 0u;
-                    const render_forward_config_t *fcfg = &cs.world.forward.cfg;
-                    for (int a2 = 0; a2 < 3; ++a2) {
-                        rp.sun_dir[a2] = fcfg->sun_dir[a2];
-                        rp.sun_color[a2] = fcfg->sun_color[a2];
-                        rp.ambient[a2] = fcfg->ambient[a2];
-                    }
-                    /* Full-pipeline face renderer: every cube face is a
-                     * REAL forward frame (shadows, lightmaps, GI, glass)
-                     * into the bake FBO -- mirror reflections show the
-                     * scene exactly as the player sees it. */
-                    rp.render_fn = refl_face_render;
-                    rp.render_user = &cs;
-                    bool rok = refl_bake_run(&gl.loader, &cs.scene,
-                                             g_bake_prefix, &rp);
-                    fprintf(stderr, "[client] --bake-probes: refl %s\n",
-                            rok ? "wrote .rprobe" : "skipped/FAILED");
-                }
                 g_running = 0;
             }
 

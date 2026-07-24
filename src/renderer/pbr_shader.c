@@ -560,6 +560,10 @@ static const char *const PBR_FS =
     "uniform float u_refl_range;\n"
     "uniform sampler2D u_refl_depth;\n"     /* RG octa depth: mean, mean^2. */
     "uniform float u_refl_depth_res;\n"
+    "uniform isamplerBuffer u_refl_index;\n" /* cell -> 4 slot ids (-1 pad). */
+    "uniform vec3 u_refl_idx_origin;\n"
+    "uniform vec3 u_refl_idx_dims;\n"
+    "uniform float u_refl_idx_cell;\n"
     /* Fills @p e_dyn (dynamic-light indirect) and @p e_stat (baked static indirect)
      * from the nearest probes' two SH4 sets, so main() can weight the static term
      * per object (rpg-pau4). */
@@ -808,8 +812,19 @@ static const char *const PBR_FS =
     "                    out float pao){\n"
     "  w = 0.0; pao = 1.0;\n"
     "  if(u_refl_count == 0) return vec4(0.0);\n"
+    /* Streamed probes (rpg-wlh9): the resident set is indexed by a coarse
+     * world grid (4 slot ids per cell) -- fetch the fragment's cell and
+     * test only those candidates. */
+    "  vec3 ic = (wp - u_refl_idx_origin) / u_refl_idx_cell;\n"
+    "  if(any(lessThan(ic, vec3(0.0))) ||\n"
+    "     any(greaterThanEqual(ic, u_refl_idx_dims))) return vec4(0.0);\n"
+    "  ivec3 ci = ivec3(ic);\n"
+    "  ivec3 idim = ivec3(u_refl_idx_dims + vec3(0.5));\n"
+    "  int cell = ((ci.z * idim.y) + ci.y) * idim.x + ci.x;\n"
     "  int best = -1; float bw = 0.0;\n"
-    "  for(int i = 0; i < u_refl_count && i < 128; ++i){\n"
+    "  for(int k = 0; k < 4; ++k){\n"
+    "    int i = texelFetch(u_refl_index, cell * 4 + k).r;\n"
+    "    if(i < 0) break;\n"
     "    vec3 pp = texelFetch(u_refl_meta, i*2+0).xyz;\n"
     "    vec3 dv = wp - pp; float dist = length(dv);\n"
     "    float wi = 1.0 - smoothstep(0.0, max(u_refl_range, 1e-3), dist);\n"
@@ -839,9 +854,26 @@ static const char *const PBR_FS =
     "  vec4 t1 = texelFetch(u_refl_meta, best*2+1);\n"
     "  pao = t0.w;\n"
     "  float lod = clamp(rough, 0.0, 1.0) * (u_refl_mips - 1.0);\n"
+    /* Sphere-proxy parallax (rpg-akwc): the tile stores the world as seen
+     * FROM THE PROBE -- sampling raw R shows a displaced image. Estimate
+     * the environment radius from the probe depth along R, intersect the
+     * fragment ray with that sphere and look up the direction to the HIT
+     * instead, so the mirror image tracks the surface. */
+    "  vec3 Rdir = R;\n"
+    "  if(u_refl_depth_res > 0.5){\n"
+    "    float cd0 = 0.5 / u_refl_depth_res;\n"
+    "    vec2 ruv = clamp(oct_enc(R), vec2(cd0), vec2(1.0 - cd0));\n"
+    "    float Rd = texture(u_refl_depth, t1.xy + ruv * t1.zw).r;\n"
+    "    vec3 rel = wp - t0.xyz;\n"
+    "    Rd = max(Rd, length(rel) + 0.25);\n"
+    "    float b2 = dot(rel, R);\n"
+    "    float c2 = dot(rel, rel) - Rd * Rd;\n"
+    "    float tt = -b2 + sqrt(max(b2 * b2 - c2, 0.0));\n"
+    "    Rdir = normalize(rel + R * tt);\n"
+    "  }\n"
     /* Clamp the octa uv half a texel inside the tile at the sampled level
      * so bilinear never bleeds into the neighbouring probe's tile. */
-    "  vec2 ouv = oct_enc(R);\n"
+    "  vec2 ouv = oct_enc(Rdir);\n"
     "  float tr = u_refl_tile_res / exp2(ceil(lod));\n"
     "  float c = 0.5 / max(tr, 2.0);\n"
     "  ouv = clamp(ouv, vec2(c), vec2(1.0 - c));\n"
@@ -1007,6 +1039,23 @@ static const char *const PBR_FS =
      * occlusion), 13 = probe influence weight after the visibility test. */
     "  if(u_debug_mode==12){ frag=vec4(refl_s.rgb*refl_s.a,1.0); return; }\n"
     "  if(u_debug_mode==13){ frag=vec4(vec3(refl_w),1.0); return; }\n"
+    /* Mode 14: the PURE cubemap fetch -- nearest probe by distance only,
+     * raw atlas sample along R at lod 0. No weights, no visibility, no
+     * cavity, no kS: if this is black on a surface, the sampling/binding
+     * itself is broken there, not the composition. */
+    "  if(u_debug_mode==14){\n"
+    "    int bi = -1; float bd = 1e30;\n"
+    "    for(int i = 0; i < u_refl_count && i < 128; ++i){\n"
+    "      float d = length(texelFetch(u_refl_meta, i*2+0).xyz - v_world_pos);\n"
+    "      if(d < bd){ bd = d; bi = i; }\n"
+    "    }\n"
+    "    if(bi < 0){ frag=vec4(1.0,0.0,1.0,1.0); return; }\n"
+    "    vec4 tt1 = texelFetch(u_refl_meta, bi*2+1);\n"
+    "    float ctt = 0.5 / u_refl_tile_res;\n"
+    "    vec2 uvv = clamp(oct_enc(Rspec), vec2(ctt), vec2(1.0 - ctt));\n"
+    "    frag = vec4(textureLod(u_refl_atlas, tt1.xy + uvv * tt1.zw, 0.0).rgb, 1.0);\n"
+    "    return;\n"
+    "  }\n"
     "  ambient += (diff_ibl + spec_ibl) * ao_o;\n"
     /* Sky-openness ambient (constant sky colour where open overhead). */
     "  ambient += kD * albedo * gi_sky * (0.5+0.5*N.y) * u_gi_sky_color * ao;\n"

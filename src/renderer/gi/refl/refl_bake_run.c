@@ -69,9 +69,11 @@ static float mip_cone_tan(uint32_t mip, uint32_t mips)
 bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
                    const char *sdf_prefix, const refl_bake_params_t *prm_in)
 {
-    if (loader == NULL || scene == NULL || sdf_prefix == NULL ||
-        prm_in == NULL)
+    if (loader == NULL || sdf_prefix == NULL || prm_in == NULL)
         return false;
+    if (scene == NULL &&
+        (prm_in->render_fn == NULL || prm_in->place_min == NULL))
+        return false;   /* no scene needs both a renderer and a box. */
     refl_bake_params_t prm = *prm_in;
     if (prm.spacing <= 0.0f) prm.spacing = 12.0f;
     if (prm.tile_res < 8u) prm.tile_res = 32u;
@@ -80,33 +82,56 @@ bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
     while ((prm.tile_res >> (prm.mips - 1u)) < 4u && prm.mips > 1u)
         prm.mips -= 1u;
     if (prm.max_probes == 0u) prm.max_probes = 1024u;
+    {
+        const char *emp = getenv("REFL_MAXP");
+        if (emp != NULL && atoi(emp) > 0)
+            prm.max_probes = (uint32_t)atoi(emp);
+    }
     if (prm.min_clear <= 0.0f) prm.min_clear = 0.75f;
     if (prm.depth_res == 0u) prm.depth_res = 16u;
 
     float mn[3], mx[3];
-    if (!scene_aabb(scene, mn, mx))
+    if (prm.place_min != NULL && prm.place_max != NULL) {
+        for (int a2 = 0; a2 < 3; ++a2) {
+            mn[a2] = prm.place_min[a2];
+            mx[a2] = prm.place_max[a2];
+        }
+    } else if (!scene_aabb(scene, mn, mx)) {
         return false;
+    }
 
     probe_chunk_sdf_t cs;
-    bool have_sdf = probe_chunk_sdf_open(sdf_prefix, &cs);
+    memset(&cs, 0, sizeof cs);
+    bool own_sdf = false;
+    refl_sdf_fn sdf_fn = prm.sdf_fn;
+    void *sdf_user = prm.sdf_user;
+    if (sdf_fn == NULL) {
+        own_sdf = probe_chunk_sdf_open(sdf_prefix, &cs);
+        if (own_sdf) {
+            sdf_fn = probe_chunk_sdf_sample;
+            sdf_user = &cs;
+        }
+    }
+    bool have_sdf = sdf_fn != NULL;
 
     refl_probe_t *probes = (refl_probe_t *)
         malloc((size_t)prm.max_probes * sizeof(refl_probe_t));
     if (probes == NULL) {
-        if (have_sdf) probe_chunk_sdf_close(&cs);
+        if (own_sdf) probe_chunk_sdf_close(&cs);
         return false;
     }
     refl_probe_set_t set;
     refl_probe_set_init(&set, probes, prm.max_probes);
-    refl_place_grid_fn(&set, mn, mx, prm.spacing,
-                       have_sdf ? probe_chunk_sdf_sample : NULL,
-                       have_sdf ? &cs : NULL, prm.min_clear,
+    refl_place_grid_fn(&set, mn, mx, prm.spacing, sdf_fn, sdf_user,
+                       prm.min_clear,
                        have_sdf ? prm.spacing * 0.75f : 0.0f);
     if (set.count == 0u) {
-        fprintf(stderr, "refl_bake: no clear probe positions (spacing %.1f)\n",
-                (double)prm.spacing);
+        if (prm.out_path == NULL)
+            fprintf(stderr,
+                    "refl_bake: no clear probe positions (spacing %.1f)\n",
+                    (double)prm.spacing);
         free(probes);
-        if (have_sdf) probe_chunk_sdf_close(&cs);
+        if (own_sdf) probe_chunk_sdf_close(&cs);
         return false;
     }
     set.tile_res = prm.tile_res;
@@ -160,13 +185,40 @@ bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
         float sl = sqrtf(sd[0]*sd[0] + sd[1]*sd[1] + sd[2]*sd[2]);
         if (sl > 1e-6f) { sd[0] /= sl; sd[1] /= sl; sd[2] /= sl; }
         float sun_vis = have_sdf
-            ? refl_occl_cone_fn(probe_chunk_sdf_sample, &cs, pr->pos, sd,
-                                0.08f, 120.0f)
+            ? refl_occl_cone_fn(sdf_fn, sdf_user, pr->pos, sd, 0.08f,
+                                120.0f)
             : 1.0f;
         float *dfaces[6];
         for (uint32_t f = 0; f < 6u; ++f)
             dfaces[f] = dfaces_mem + (size_t)f * dface_n;
         refl_bake_probe(&rb, scene, pr->pos, &prm, sun_vis, faces, dfaces);
+        /* REFL_DUMP=1: write probe 0's six RAW faces (pre-octa, pre-gamma
+         * inversion) as PPMs -- the ground truth of what the pipeline
+         * callback actually rendered into the bake FBO. */
+        if ((i == 0u || i == set.count / 2u) &&
+            getenv("REFL_DUMP") != NULL) {
+            for (uint32_t f = 0; f < 6u; ++f) {
+                char dp[64];
+                snprintf(dp, sizeof dp, "build/refl_p%u_face%u.ppm", i, f);
+                FILE *df = fopen(dp, "wb");
+                if (df != NULL) {
+                    fprintf(df, "P6\n%u %u\n255\n", prm.face_res,
+                            prm.face_res);
+                    for (size_t t = 0; t < face_n; t += 4u) {
+                        for (int ch = 0; ch < 3; ++ch) {
+                            float v = faces[f][t + (size_t)ch];
+                            if (v < 0.0f) v = 0.0f;
+                            if (v > 1.0f) v = 1.0f;
+                            fputc((int)(v * 255.0f), df);
+                        }
+                    }
+                    fclose(df);
+                }
+            }
+            fprintf(stderr, "refl_bake: dumped probe %u at "
+                    "(%.1f, %.1f, %.1f)\n", i, (double)pr->pos[0],
+                    (double)pr->pos[1], (double)pr->pos[2]);
+        }
         /* Full-pipeline output is gamma-encoded for display: invert it so
          * the atlas stores LINEAR radiance (re-gammaed at shade time). */
         if (prm.render_fn != NULL)
@@ -240,20 +292,46 @@ bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
                 res /= 2u;
                 memcpy(tile, down, (size_t)res * res * 4u * sizeof(float));
             }
-            /* Specular-occlusion alpha: cone-march the baked SDF per texel
-             * direction; the LAST mip's mean becomes the probe's ao. */
+            /* Specular-occlusion alpha: cone-march the baked SDF on a
+             * FIXED 32x32 octa grid (occlusion is low-frequency; marching
+             * per atlas texel at mirror-grade tile sizes would explode),
+             * then bilinearly lift it onto this mip's texels. The LAST
+             * mip's mean becomes the probe's ao. */
+            enum { OCC_RES = 32 };
+            static float occ[OCC_RES * OCC_RES];
             float ctan = mip_cone_tan(m, set.mips);
-            for (uint32_t y = 0; y < res; ++y)
-                for (uint32_t x = 0; x < res; ++x) {
-                    float uv[2] = { ((float)x + 0.5f) / (float)res,
-                                    ((float)y + 0.5f) / (float)res };
+            for (uint32_t y = 0; y < OCC_RES; ++y)
+                for (uint32_t x = 0; x < OCC_RES; ++x) {
+                    float uv[2] = { ((float)x + 0.5f) / (float)OCC_RES,
+                                    ((float)y + 0.5f) / (float)OCC_RES };
                     float d[3];
                     refl_octa_decode(uv, d);
-                    float a = have_sdf
-                        ? refl_occl_cone_fn(probe_chunk_sdf_sample, &cs,
-                                            pr->pos, d, ctan,
-                                            prm.spacing * 2.0f)
+                    occ[y * OCC_RES + x] = have_sdf
+                        ? refl_occl_cone_fn(sdf_fn, sdf_user, pr->pos, d,
+                                            ctan, prm.spacing * 2.0f)
                         : 1.0f;
+                }
+            for (uint32_t y = 0; y < res; ++y)
+                for (uint32_t x = 0; x < res; ++x) {
+                    float fx = (((float)x + 0.5f) / (float)res) * OCC_RES
+                               - 0.5f;
+                    float fy = (((float)y + 0.5f) / (float)res) * OCC_RES
+                               - 0.5f;
+                    int32_t x0 = (int32_t)floorf(fx);
+                    int32_t y0 = (int32_t)floorf(fy);
+                    float wx = fx - (float)x0, wy = fy - (float)y0;
+                    float a = 0.0f;
+                    for (int32_t j = 0; j < 2; ++j)
+                        for (int32_t i2 = 0; i2 < 2; ++i2) {
+                            int32_t sx = x0 + i2, sy = y0 + j;
+                            if (sx < 0) sx = 0;
+                            if (sy < 0) sy = 0;
+                            if (sx >= OCC_RES) sx = OCC_RES - 1;
+                            if (sy >= OCC_RES) sy = OCC_RES - 1;
+                            a += occ[sy * OCC_RES + sx] *
+                                 (i2 ? wx : 1.0f - wx) *
+                                 (j ? wy : 1.0f - wy);
+                        }
                     tile[((size_t)y * res + x) * 4u + 3u] = a;
                     if (m + 1u == set.mips) {
                         ao_sum += a;
@@ -278,7 +356,10 @@ bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
 
     if (ok) {
         char path[576];
-        snprintf(path, sizeof path, "%s.rprobe", sdf_prefix);
+        if (prm.out_path != NULL)
+            snprintf(path, sizeof path, "%s", prm.out_path);
+        else
+            snprintf(path, sizeof path, "%s.rprobe", sdf_prefix);
         const float *cmips[REFL_PROBE_MAX_MIPS] = { 0 };
         for (uint32_t m = 0; m < set.mips; ++m)
             cmips[m] = mips[m];
@@ -303,7 +384,7 @@ bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
     free(tile);
     free(faces_mem);
     free(probes);
-    if (have_sdf)
+    if (own_sdf)
         probe_chunk_sdf_close(&cs);
     return ok;
 }

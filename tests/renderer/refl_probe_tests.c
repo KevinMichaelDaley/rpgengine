@@ -420,6 +420,79 @@ static int test_file_roundtrip(void)
     return 0;
 }
 
+/* ------------------------------------------------- streaming primitives */
+#include "ferrum/renderer/gi/refl_half.h"
+#include "ferrum/renderer/gi/refl_index.h"
+#include "ferrum/renderer/gi/refl_slots.h"
+
+static int test_half_roundtrip(void)
+{
+    const float vals[] = { 0.0f, 1.0f, -1.0f, 0.5f, 0.1f, 100.0f,
+                           0.0009765625f, 65504.0f };
+    for (size_t i = 0; i < sizeof(vals) / sizeof(vals[0]); ++i) {
+        uint16_t h = refl_f32_to_f16(vals[i]);
+        float back = refl_f16_to_f32(h);
+        float tol = (vals[i] == 0.0f) ? 1e-6f : fabsf(vals[i]) * 2e-3f;
+        ASSERT_TRUE(fabsf(back - vals[i]) <= tol);
+    }
+    /* Overflow clamps to max half, never inf. */
+    ASSERT_TRUE(refl_f16_to_f32(refl_f32_to_f16(1e9f)) <= 65504.0f);
+    return 0;
+}
+
+static int test_slot_pool(void)
+{
+    uint16_t mem[8];
+    refl_slot_pool_t pool;
+    refl_slot_pool_init(&pool, mem, 8u);
+    uint32_t a = refl_slot_alloc(&pool);
+    uint32_t b = refl_slot_alloc(&pool);
+    ASSERT_TRUE(a != b && a < 8u && b < 8u);
+    for (int i = 0; i < 6; ++i)
+        ASSERT_TRUE(refl_slot_alloc(&pool) < 8u);
+    ASSERT_TRUE(refl_slot_alloc(&pool) == REFL_SLOT_NONE);   /* exhausted */
+    refl_slot_free(&pool, b);
+    uint32_t c = refl_slot_alloc(&pool);
+    ASSERT_TRUE(c == b);                                     /* reused */
+    /* Double free is ignored; alloc still exhausted after. */
+    refl_slot_free(&pool, c);
+    refl_slot_free(&pool, c);
+    ASSERT_TRUE(refl_slot_alloc(&pool) == c);
+    ASSERT_TRUE(refl_slot_alloc(&pool) == REFL_SLOT_NONE);
+    return 0;
+}
+
+static int test_grid_index(void)
+{
+    enum { CAP = 8 };
+    refl_probe_t probes[CAP];
+    refl_probe_set_t set;
+    refl_probe_set_init(&set, probes, CAP);
+    /* Two probes in one cell, one in another. */
+    float ps[3][3] = { { 1, 1, 1 }, { 2, 2, 2 }, { 30, 1, 1 } };
+    for (int i = 0; i < 3; ++i) {
+        refl_probe_t *p = &set.probes[set.count++];
+        p->pos[0] = ps[i][0]; p->pos[1] = ps[i][1]; p->pos[2] = ps[i][2];
+        p->tile = (uint32_t)i;
+    }
+    float mn[3] = { 0, 0, 0 }, mx[3] = { 64, 8, 64 };
+    int32_t cells[8 * 1 * 8 * REFL_INDEX_PER_CELL];
+    int32_t dims[3];
+    refl_index_build(&set, mn, mx, 8.0f, cells, 8 * 1 * 8, dims);
+    ASSERT_TRUE(dims[0] == 8 && dims[1] == 1 && dims[2] == 8);
+    /* Cell (0,0,0) holds probes 0+1; cell (3,0,0) holds probe 2. */
+    const int32_t *c0 = &cells[0];
+    ASSERT_TRUE(c0[0] == 0 && c0[1] == 1 && c0[2] < 0);
+    const int32_t *c3 = &cells[(size_t)3 * REFL_INDEX_PER_CELL];
+    ASSERT_TRUE(c3[0] == 2 && c3[1] < 0);
+    /* Out-of-grid probe is dropped without crashing. */
+    refl_probe_t *p = &set.probes[set.count++];
+    p->pos[0] = -50.0f; p->pos[1] = 0.0f; p->pos[2] = 0.0f;
+    refl_index_build(&set, mn, mx, 8.0f, cells, 8 * 1 * 8, dims);
+    ASSERT_TRUE(c0[0] == 0 && c0[1] == 1);
+    return 0;
+}
+
 int main(void)
 {
     int rc = 0;
@@ -433,7 +506,11 @@ int main(void)
     rc |= test_occl_cone();
     rc |= test_fn_variants();
     rc |= test_file_roundtrip();
+    rc |= test_half_roundtrip();
+    rc |= test_slot_pool();
+    rc |= test_grid_index();
     if (rc == 0)
         printf("  OK: all refl_probe tests passed\n");
     return rc;
 }
+

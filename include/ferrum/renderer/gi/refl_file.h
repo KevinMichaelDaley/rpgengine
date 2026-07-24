@@ -4,10 +4,10 @@
  *        prefiltered octahedral atlas mip chain.
  *
  * Layout (native endian):
- *   char  magic[4] = "RFP2"
+ *   char  magic[4] = "RFP3"
  *   u32   count, tile_res, mips, tiles_x, tiles_y, depth_res
  *   per probe: float pos[3], float ao, u32 tile
- *   per mip m in [0, mips): float rgba[w_m * h_m * 4]   (atlas dims at m)
+ *   per mip m in [0, mips): f16 rgba[w_m * h_m * 4]    (atlas dims at m)
  *   if depth_res > 0: float rg[tiles_x*depth_res * tiles_y*depth_res * 2]
  *     -- the octahedral visibility-depth atlas (radial mean, mean^2), the
  *     DDGI-style Chebyshev test that keeps fragments from sampling probes
@@ -48,6 +48,26 @@ bool refl_file_save(const char *path, const refl_probe_set_t *set,
 bool refl_file_load(const char *path, refl_probe_set_t *set,
                     float *out_mips[REFL_PROBE_MAX_MIPS],
                     float **out_depth);
+
+/** Probe cap per streamed chunk payload (fixed storage, no realloc). */
+#define REFL_CHUNK_MAX_PROBES 256u
+
+/** One streamed chunk's parsed .rprobe payload (rpg-wlh9). */
+typedef struct refl_chunk_payload {
+    refl_probe_set_t set;            /**< probes -> the array below. */
+    refl_probe_t probes[REFL_CHUNK_MAX_PROBES];
+    float *mips[REFL_PROBE_MAX_MIPS];/**< malloc'd atlas mips (f32). */
+    float *depth;                    /**< malloc'd RG depth atlas. */
+} refl_chunk_payload_t;
+
+/**
+ * Load @p path as a streamed chunk payload (malloc'd; NULL on any
+ * failure). Free with refl_chunk_free. One-shot load-time allocation.
+ */
+refl_chunk_payload_t *refl_chunk_load(const char *path);
+
+/** Free a payload + its buffers. NULL-safe. */
+void refl_chunk_free(refl_chunk_payload_t *p);
 
 #ifdef __cplusplus
 }

@@ -112,6 +112,21 @@ bool refl_bake_init(refl_bake_t *rb, const gl_loader_t *loader,
     return true;
 }
 
+/* glReadPixels returns rows bottom-up; cube-face images are consumed
+ * top-down by the octa resampler. Flip in place. */
+static void rb_flip_rows(float *img, uint32_t res, uint32_t comps)
+{
+    for (uint32_t y = 0; y < res / 2u; ++y) {
+        float *a2 = img + (size_t)y * res * comps;
+        float *b2 = img + (size_t)(res - 1u - y) * res * comps;
+        for (size_t i = 0; i < (size_t)res * comps; ++i) {
+            float t = a2[i];
+            a2[i] = b2[i];
+            b2[i] = t;
+        }
+    }
+}
+
 /* Cube-face view matrix matching shadow_cube (GL face conventions). */
 static void rb_face_view(uint32_t face, const float p[3], mat4_t *out)
 {
@@ -133,9 +148,10 @@ void refl_bake_probe(refl_bake_t *rb, const render_scene_t *scene,
                      float sun_vis, float *faces[6],
                      float *depth_faces[6])
 {
-    if (rb == NULL || scene == NULL || pos == NULL || prm == NULL ||
-        faces == NULL)
+    if (rb == NULL || pos == NULL || prm == NULL || faces == NULL)
         return;
+    if (scene == NULL && prm->render_fn == NULL)
+        return;         /* the minimal path draws the scene directly. */
     for (uint32_t f = 0; f < 6u; ++f)
         if (faces[f] == NULL)
             return;
@@ -148,17 +164,29 @@ void refl_bake_probe(refl_bake_t *rb, const render_scene_t *scene,
         for (uint32_t f = 0; f < 6u; ++f) {
             mat4_t view;
             rb_face_view(f, pos, &view);
+            /* The pipeline never clears an offscreen target (the client
+             * clears the WINDOW): without this, sky pixels keep stale
+             * colour and garbage depth breaks the sky/late passes. */
+            rb->glBindFramebuffer(GL_FRAMEBUFFER, rb->fbo);
+            rb->glViewport(0, 0, (int32_t)rb->face_res,
+                           (int32_t)rb->face_res);
+            rb->glClearColor(prm->sky[0], prm->sky[1], prm->sky[2],
+                             1.0f);
+            rb->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
             prm->render_fn(prm->render_user, rb->fbo, view.m, proj.m, pos,
-                           rb->face_res);
+                           rb->face_res, sun_vis);
             rb->glBindFramebuffer(GL_FRAMEBUFFER, rb->fbo);
             rb->glFinish();
             rb->glReadPixels(0, 0, (int32_t)rb->face_res,
                              (int32_t)rb->face_res, GL_RGBA, GL_FLOAT,
                              faces[f]);
-            if (depth_faces != NULL && depth_faces[f] != NULL)
+            rb_flip_rows(faces[f], rb->face_res, 4u);
+            if (depth_faces != NULL && depth_faces[f] != NULL) {
                 rb->glReadPixels(0, 0, (int32_t)rb->face_res,
                                  (int32_t)rb->face_res, GL_DEPTH_COMPONENT,
                                  GL_FLOAT, depth_faces[f]);
+                rb_flip_rows(depth_faces[f], rb->face_res, 1u);
+            }
         }
         rb->glBindFramebuffer(GL_FRAMEBUFFER, 0);
         return;
@@ -220,10 +248,13 @@ void refl_bake_probe(refl_bake_t *rb, const render_scene_t *scene,
         rb->glFinish();
         rb->glReadPixels(0, 0, (int32_t)rb->face_res, (int32_t)rb->face_res,
                          GL_RGBA, GL_FLOAT, faces[f]);
-        if (depth_faces != NULL && depth_faces[f] != NULL)
+        rb_flip_rows(faces[f], rb->face_res, 4u);
+        if (depth_faces != NULL && depth_faces[f] != NULL) {
             rb->glReadPixels(0, 0, (int32_t)rb->face_res,
                              (int32_t)rb->face_res, GL_DEPTH_COMPONENT,
                              GL_FLOAT, depth_faces[f]);
+            rb_flip_rows(depth_faces[f], rb->face_res, 1u);
+        }
     }
     rb->glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

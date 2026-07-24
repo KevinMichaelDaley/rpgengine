@@ -39,6 +39,8 @@ typedef struct refl_bake_params {
     float sun_color[3];   /**< sun radiance. */
     float ambient[3];     /**< sky irradiance for the hemispherical term. */
     uint32_t depth_res;   /**< octa visibility-depth tile edge (default 16). */
+    float sky[3];         /**< clear/sky radiance for full-pipeline faces
+                           *   (what unrendered directions reflect). */
     /**
      * Optional FULL-PIPELINE face renderer: when set, each cube face is
      * rendered by this callback INSTEAD of the built-in minimal lit shader
@@ -51,8 +53,15 @@ typedef struct refl_bake_params {
      */
     void (*render_fn)(void *user, uint32_t fbo, const float view[16],
                       const float proj[16], const float eye[3],
-                      uint32_t face_res);
+                      uint32_t face_res, float sun_vis);
     void *render_user;    /**< passed through to render_fn. */
+    /* Optional injected SDF sampler (placement / occlusion / sun-vis):
+     * when NULL the run opens <sdf_prefix>_cNNN.sdf itself. */
+    float (*sdf_fn)(const float p[3], void *user);
+    void *sdf_user;
+    const float *place_min;  /**< optional placement AABB override (min). */
+    const float *place_max;  /**< optional placement AABB override (max). */
+    const char *out_path;    /**< optional output path override. */
 } refl_bake_params_t;
 
 /** GL state for the cube pass (function pointers + FBO + shader). */
@@ -127,6 +136,22 @@ void refl_bake_destroy(refl_bake_t *rb);
  */
 bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
                    const char *sdf_prefix, const refl_bake_params_t *prm);
+
+/**
+ * Bake-mode entry (rpg-wlh9): per-SDF-chunk DENSE probe grids over the
+ * lightmap mesh set. For every <sdf_prefix>_cNNN.sdf chunk: place a grid
+ * (prm->spacing, default 2.5 m) inside the chunk bounds, render each
+ * probe's cube from the lm meshes (minimal lit shader; @p sun nullable),
+ * and write <sdf_prefix>_cNNN.rprobe. Chunks with no clear positions
+ * write nothing. Returns false when no chunk produced probes.
+ */
+struct lm_mesh;
+struct lm_light;
+bool refl_bake_chunks(const gl_loader_t *loader,
+                      const struct lm_mesh *meshes, uint32_t n_meshes,
+                      const struct lm_light *sun, const float sky[3],
+                      const char *sdf_prefix,
+                      const refl_bake_params_t *prm);
 
 #ifdef __cplusplus
 }

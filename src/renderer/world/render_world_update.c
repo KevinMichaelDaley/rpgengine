@@ -52,6 +52,8 @@ void render_world_update(render_world_t *rw, const gi_collider_t *boxes,
         gi_runtime_frame(&rw->gi, rw->scene, rw->scene->camera.view,
                          rw->scene->camera.proj, boxes, n_boxes, screen_w, screen_h);
         world_feed_caustic_sdf(rw);
+        /* Streamed reflection probes ride the same chunk residency. */
+        refl_stream_sync(&rw->refl, rw->gi.sdf_ptr);
     }
     render_forward_render(&rw->forward, rw->scene);
 }

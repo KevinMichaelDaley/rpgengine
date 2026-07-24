@@ -24,7 +24,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "ferrum/renderer/gi/refl_bind.h"
+#include "ferrum/renderer/gi/refl_stream.h"
 #include "ferrum/renderer/render_forward.h"
 #include "ferrum/renderer/render_scene.h"
 #include "ferrum/renderer/gi/gi_runtime.h"
@@ -96,7 +96,7 @@ typedef struct render_world_config {
 typedef struct render_world {
     render_forward_t forward;
     gi_runtime_t     gi;
-    refl_gpu_t       refl;     /**< sparse cubemap reflection probes. */
+    refl_stream_t    refl;     /**< streamed cubemap reflection probes. */
     render_scene_t  *scene;    /**< borrowed. */
     int              gi_enabled;
 } render_world_t;

@@ -12,6 +12,7 @@
 #include <string.h>
 
 #include "ferrum/renderer/client_bake.h"
+#include "ferrum/renderer/gi/refl_bake.h"
 #include "ferrum/scene/scene_desc.h"
 #include "ferrum/lightmap/lm_bake_driver.h"
 #include "ferrum/lightmap/lm_lightmap_file.h"
@@ -392,6 +393,9 @@ bool client_bake_run(const gl_loader_t *loader, const struct scene_desc *descp,
     ctx.images = calloc(desc->material_count ? desc->material_count : 1, sizeof *ctx.images);
     ctx.meshes = calloc(desc->object_count ? desc->object_count : 1, sizeof *ctx.meshes);
     if (!ctx.slots || !ctx.images || !ctx.meshes) { free(ctx.slots); free(ctx.images); free(ctx.meshes); return false; }
+    /* Zero the mesh array: the refl hook scans for the first unfilled entry
+     * (positions == NULL) to recover the bakeable-mesh count. */
+    memset(ctx.meshes, 0, (size_t)desc->object_count * sizeof(lm_mesh_t));
 
     /* Sun: first descriptor directional light -> bake radiance = colour*intensity. */
     for (uint32_t i = 0; i < desc->light_count; ++i) {
@@ -423,6 +427,33 @@ bool client_bake_run(const gl_loader_t *loader, const struct scene_desc *descp,
             ok = client_bake_chunked(loader, &ctx, prefix, chunk_edge, &arena);
         } else {
             ok = lm_bake_driver_run(loader, client_bake_setup, &ctx, out_flm, &arena);
+        }
+        /* Reflection probes (rpg-wlh9) MUST bake before the arena dies:
+         * the lm meshes' world-space arrays live in it. */
+        if (ok) {
+            /* Dense per-chunk cubemap grids over
+             * the freshly written SDF chunks, streamed at runtime with the
+             * same visibility-gated chunk residency. CLIENT_BAKE_REFL=0 skips;
+             * REFL_SPACING / REFL_TILE override the defaults (2.5 m, 64 px). */
+            const char *er = getenv("CLIENT_BAKE_REFL");
+            const char *sdfp = getenv("CLIENT_BAKE_SDF");
+            if (sdfp != NULL && sdfp[0] != '\0' &&
+                (er == NULL || atoi(er) != 0)) {
+                refl_bake_params_t rp;
+                memset(&rp, 0, sizeof rp);
+                const char *es = getenv("REFL_SPACING");
+                const char *et = getenv("REFL_TILE");
+                rp.spacing = es ? (float)atof(es) : 0.0f;
+                rp.tile_res = et ? (uint32_t)atoi(et) : 64u;
+                float sky[3] = { 0.30780f, 0.37700f, 0.51760f };
+                uint32_t rn = 0u;
+                while (rn < desc->object_count &&
+                       ctx.meshes[rn].positions != NULL)
+                    rn += 1u;
+                (void)refl_bake_chunks(loader, ctx.meshes, rn,
+                                       ctx.have_sun ? &ctx.sun : NULL, sky,
+                                       sdfp, &rp);
+            }
         }
         free(abuf);
     }

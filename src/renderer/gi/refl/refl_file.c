@@ -9,8 +9,44 @@
 #include <string.h>
 
 #include "ferrum/renderer/gi/refl_atlas.h"
+#include "ferrum/renderer/gi/refl_half.h"
 
-static const char RFP_MAGIC[4] = { 'R', 'F', 'P', '2' };
+static const char RFP_MAGIC[4] = { 'R', 'F', 'P', '3' };
+
+/* Mip payloads live on disk as IEEE halves (rpg-wlh9: streamed per-chunk
+ * assets at room density -- f32 doubled every chunk for no visual gain).
+ * Depth stays f32 (tiny, and the Chebyshev test is precision-sensitive). */
+static bool write_f16(FILE *f, const float *v, size_t n)
+{
+    enum { CHUNK = 4096 };
+    uint16_t buf[CHUNK];
+    while (n > 0u) {
+        size_t k = (n < (size_t)CHUNK) ? n : (size_t)CHUNK;
+        for (size_t i = 0; i < k; ++i)
+            buf[i] = refl_f32_to_f16(v[i]);
+        if (fwrite(buf, sizeof(uint16_t), k, f) != k)
+            return false;
+        v += k;
+        n -= k;
+    }
+    return true;
+}
+
+static bool read_f16(FILE *f, float *v, size_t n)
+{
+    enum { CHUNK = 4096 };
+    uint16_t buf[CHUNK];
+    while (n > 0u) {
+        size_t k = (n < (size_t)CHUNK) ? n : (size_t)CHUNK;
+        if (fread(buf, sizeof(uint16_t), k, f) != k)
+            return false;
+        for (size_t i = 0; i < k; ++i)
+            v[i] = refl_f16_to_f32(buf[i]);
+        v += k;
+        n -= k;
+    }
+    return true;
+}
 
 bool refl_file_save(const char *path, const refl_probe_set_t *set,
                     const float *const mips[], const float *depth)
@@ -39,7 +75,7 @@ bool refl_file_save(const char *path, const refl_probe_set_t *set,
         uint32_t w, h;
         refl_atlas_dims(set, m, &w, &h);
         size_t n = (size_t)w * h * 4u;
-        ok = fwrite(mips[m], sizeof(float), n, f) == n;
+        ok = write_f16(f, mips[m], n);
     }
     if (ok && set->depth_res > 0u) {
         size_t n = (size_t)set->tiles_x * set->depth_res *
@@ -89,8 +125,7 @@ bool refl_file_load(const char *path, refl_probe_set_t *set,
         refl_atlas_dims(set, m, &w, &h);
         size_t n = (size_t)w * h * 4u;
         bufs[m] = (float *)malloc(n * sizeof(float));
-        ok = bufs[m] != NULL &&
-             fread(bufs[m], sizeof(float), n, f) == n;
+        ok = bufs[m] != NULL && read_f16(f, bufs[m], n);
     }
     if (ok && set->depth_res > 0u) {
         size_t n = (size_t)set->tiles_x * set->depth_res *

@@ -2478,7 +2478,9 @@ REFL_TEST_SRC := tests/renderer/refl_probe_tests.c src/renderer/gi/refl/refl_pro
 	src/renderer/gi/refl/refl_octa.c src/renderer/gi/refl/refl_octa_cube.c \
 	src/renderer/gi/refl/refl_atlas.c src/renderer/gi/refl/refl_filter.c \
 	src/renderer/gi/refl/refl_place.c src/renderer/gi/refl/refl_occl.c \
-	src/renderer/gi/refl/refl_file.c src/renderer/gi/gi_sdf.c
+	src/renderer/gi/refl/refl_file.c src/renderer/gi/refl/refl_half.c \
+	src/renderer/gi/refl/refl_slots.c src/renderer/gi/refl/refl_index.c \
+	src/renderer/gi/gi_sdf.c
 build/refl_probe_tests: $(REFL_TEST_SRC) | build
 	$(CC) $(CFLAGS) $(REFL_TEST_SRC) -o $@ -lm
 

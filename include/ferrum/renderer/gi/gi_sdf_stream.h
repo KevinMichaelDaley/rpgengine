@@ -81,6 +81,10 @@ typedef struct gi_sdf_stream {
     float             **cp_sh;                /**< [n_chunks] n*24 diffuse SH (RAM). */
     float             **cp_sg;                /**< [n_chunks] n*24 specular SG (RAM). */
     uint32_t           *cp_n;                 /**< [n_chunks] probe count per chunk. */
+    /* Streamed reflection probes (rpg-wlh9): per-chunk .rprobe payloads,
+     * loaded/freed with the chunk; consumed by refl_stream. */
+    int                 has_rprobe;           /**< 1 = per-chunk .rprobe present. */
+    struct refl_chunk_payload **rp;           /**< [n_chunks] payloads (RAM). */
     uint8_t            *cp_uploaded;          /**< [n_chunks] SH pushed to GPU this residency. */
     /* GLOBAL low-res ZONE SDF (page-fault fallback): always resident; sampled by
      * the probe trace wherever no fine chunk is bound, so rays NEVER see empty
@@ -128,6 +132,10 @@ void gi_sdf_stream_chunk_evict(gi_sdf_stream_t *s, int c);
 int gi_sdf_stream_chunk_loaded(const gi_sdf_stream_t *s, int c);
 
 /** @brief Get chunk @p c's loaded baked probe SH (NULL/0 if none). Borrowed. */
+/** Chunk's streamed reflection payload (NULL when absent/not resident). */
+struct refl_chunk_payload *gi_sdf_stream_chunk_refl(const gi_sdf_stream_t *s,
+                                                    int c);
+
 int gi_sdf_stream_chunk_probes(const gi_sdf_stream_t *s, int c,
                                const uint32_t **idx, const float **sh,
                                const float **sg, uint32_t *n);
