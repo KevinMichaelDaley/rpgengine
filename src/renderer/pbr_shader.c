@@ -558,6 +558,8 @@ static const char *const PBR_FS =
     "uniform float u_refl_tile_res;\n"
     "uniform float u_refl_gain;\n"
     "uniform float u_refl_range;\n"
+    "uniform sampler2D u_refl_depth;\n"     /* RG octa depth: mean, mean^2. */
+    "uniform float u_refl_depth_res;\n"
     /* Fills @p e_dyn (dynamic-light indirect) and @p e_stat (baked static indirect)
      * from the nearest probes' two SH4 sets, so main() can weight the static term
      * per object (rpg-pau4). */
@@ -809,8 +811,23 @@ static const char *const PBR_FS =
     "  int best = -1; float bw = 0.0;\n"
     "  for(int i = 0; i < u_refl_count && i < 128; ++i){\n"
     "    vec3 pp = texelFetch(u_refl_meta, i*2+0).xyz;\n"
-    "    float wi = 1.0 - smoothstep(0.0, max(u_refl_range, 1e-3),\n"
-    "                                length(pp - wp));\n"
+    "    vec3 dv = wp - pp; float dist = length(dv);\n"
+    "    float wi = 1.0 - smoothstep(0.0, max(u_refl_range, 1e-3), dist);\n"
+    "    if(wi <= bw) continue;\n"
+    /* Visibility (DDGI Chebyshev): compare the fragment's distance against
+     * the probe's baked octa depth toward it -- a probe cannot light a
+     * fragment it never saw (behind a wall its depth stops short of). */
+    "    if(u_refl_depth_res > 0.5 && dist > 1e-3){\n"
+    "      vec4 t1 = texelFetch(u_refl_meta, i*2+1);\n"
+    "      float cd = 0.5 / u_refl_depth_res;\n"
+    "      vec2 duv = clamp(oct_enc(dv / dist), vec2(cd), vec2(1.0 - cd));\n"
+    "      vec2 dm = texture(u_refl_depth, t1.xy + duv * t1.zw).rg;\n"
+    "      float dvr = dist - dm.x;\n"
+    "      if(dvr > 0.0){\n"
+    "        float var = max(dm.y - dm.x * dm.x, 0.01);\n"
+    "        wi *= clamp(var / (var + dvr * dvr), 0.02, 1.0);\n"
+    "      }\n"
+    "    }\n"
     "    if(wi > bw){ bw = wi; best = i; }\n"
     "  }\n"
     "  if(best < 0 || bw <= 0.0) return vec4(0.0);\n"

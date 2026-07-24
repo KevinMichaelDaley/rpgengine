@@ -15,7 +15,7 @@ static void rw_gi_bind(void *u, shader_uniform_cache_t *c, const shader_program_
 {
     render_world_t *rw = (render_world_t *)u;
     gi_runtime_bind(&rw->gi, c, p, 24u);
-    refl_gpu_bind(&rw->refl, c, p, 35u, 41u);
+    refl_gpu_bind(&rw->refl, c, p, 35u, 41u, 42u);
 }
 
 /* Load + upload the .rprobe sidecar (load-time heap, freed before return).
@@ -32,14 +32,17 @@ static void rw_refl_load(render_world_t *rw, const render_world_config_t *cfg)
     refl_probe_set_t set;
     refl_probe_set_init(&set, probes, RW_REFL_CAP);
     float *mips[REFL_PROBE_MAX_MIPS] = { 0 };
-    if (refl_file_load(cfg->refl_path, &set, mips)) {
-        if (refl_gpu_upload(&rw->refl, cfg->forward.loader, &set, mips)) {
+    float *depth = NULL;
+    if (refl_file_load(cfg->refl_path, &set, mips, &depth)) {
+        if (refl_gpu_upload(&rw->refl, cfg->forward.loader, &set, mips,
+                            depth)) {
             rw->refl.gain = (cfg->refl_gain > 0.0f) ? cfg->refl_gain : 1.0f;
             if (cfg->refl_range > 0.0f)
                 rw->refl.range = cfg->refl_range;
         }
         for (uint32_t m = 0; m < REFL_PROBE_MAX_MIPS; ++m)
             free(mips[m]);
+        free(depth);
     }
     free(probes);
 }

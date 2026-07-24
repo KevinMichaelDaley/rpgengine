@@ -44,7 +44,7 @@ static void test_bake_empty_scene(const gl_loader_t *loader)
     static float mem[6][FR * FR * 4];
     float *faces[6] = { mem[0], mem[1], mem[2], mem[3], mem[4], mem[5] };
     float pos[3] = { 0, 0, 0 };
-    refl_bake_probe(&rb, &scene, pos, &prm, 1.0f, faces);
+    refl_bake_probe(&rb, &scene, pos, &prm, 1.0f, faces, NULL);
     /* Every face texel = the ambient escape radiance, alpha 1. */
     int ok = 1;
     for (int f = 0; f < 6 && ok; ++f)
@@ -78,7 +78,8 @@ static void test_gpu_upload(const gl_loader_t *loader)
     float *mips[REFL_PROBE_MAX_MIPS] = { m0, m1 };
 
     refl_gpu_t gpu;
-    CHECK(refl_gpu_upload(&gpu, loader, &set, mips), "gpu upload");
+    CHECK(refl_gpu_upload(&gpu, loader, &set, mips, NULL),
+          "gpu upload");
     CHECK(gpu.count == N && gpu.mips == MIPS, "gpu mirror fields");
     CHECK(gpu.atlas != 0 && gpu.meta_tex != 0, "gl objects created");
     refl_gpu_destroy(&gpu);
@@ -86,7 +87,8 @@ static void test_gpu_upload(const gl_loader_t *loader)
 
     /* NULL/degenerate input: disabled, not crashed. */
     refl_gpu_t g2;
-    CHECK(!refl_gpu_upload(&g2, loader, NULL, mips), "null set rejected");
+    CHECK(!refl_gpu_upload(&g2, loader, NULL, mips, NULL),
+          "null set rejected");
     CHECK(g2.count == 0u, "failed upload leaves feature off");
 }
 

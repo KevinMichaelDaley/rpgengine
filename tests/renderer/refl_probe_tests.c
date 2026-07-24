@@ -356,6 +356,7 @@ static int test_file_roundtrip(void)
     set.mips = MIPS;
     set.tiles_x = 2u;
     set.tiles_y = 2u;
+    set.depth_res = 4u;
     for (uint32_t i = 0; i < N; ++i) {
         refl_probe_t *pr = &set.probes[set.count++];
         pr->pos[0] = (float)i; pr->pos[1] = 2.0f * (float)i;
@@ -363,31 +364,40 @@ static int test_file_roundtrip(void)
         pr->ao = 0.25f * (float)(i + 1);
         pr->tile = i;
     }
-    /* Mip payloads: full atlas per mip, distinctive values. */
+    /* Mip payloads: full atlas per mip, distinctive values; plus the RG
+     * visibility-depth atlas (tiles_x*depth_res x tiles_y*depth_res). */
     static float mip0[16 * 16 * 4], mip1[8 * 8 * 4];
+    static float depth[8 * 8 * 2];
     for (uint32_t i = 0; i < 16 * 16 * 4; ++i) mip0[i] = (float)i * 0.5f;
     for (uint32_t i = 0; i < 8 * 8 * 4; ++i) mip1[i] = 100.0f + (float)i;
+    for (uint32_t i = 0; i < 8 * 8 * 2; ++i) depth[i] = 7.0f + (float)i;
     const float *mips[MIPS] = { mip0, mip1 };
 
     const char *path = "build/refl_probe_test.rprobe";
-    ASSERT_TRUE(refl_file_save(path, &set, mips));
+    ASSERT_TRUE(refl_file_save(path, &set, mips, depth));
+    /* NULL depth with nonzero depth_res -> rejected. */
+    ASSERT_TRUE(!refl_file_save(path, &set, mips, NULL));
 
     refl_probe_t lp[8];
     refl_probe_set_t ls;
     refl_probe_set_init(&ls, lp, 8u);
     float *lmips[REFL_PROBE_MAX_MIPS] = { 0 };
-    ASSERT_TRUE(refl_file_load(path, &ls, lmips));
+    float *ldepth = NULL;
+    ASSERT_TRUE(refl_file_load(path, &ls, lmips, &ldepth));
     ASSERT_TRUE(ls.count == N && ls.tile_res == TR && ls.mips == MIPS);
     ASSERT_TRUE(ls.tiles_x == 2u && ls.tiles_y == 2u);
+    ASSERT_TRUE(ls.depth_res == 4u);
     for (uint32_t i = 0; i < N; ++i) {
         ASSERT_TRUE(fabsf(ls.probes[i].pos[1] - 2.0f * (float)i) < 1e-6f);
         ASSERT_TRUE(fabsf(ls.probes[i].ao - 0.25f * (float)(i + 1)) < 1e-6f);
         ASSERT_TRUE(ls.probes[i].tile == i);
     }
-    ASSERT_TRUE(lmips[0] != NULL && lmips[1] != NULL);
+    ASSERT_TRUE(lmips[0] != NULL && lmips[1] != NULL && ldepth != NULL);
     ASSERT_TRUE(memcmp(lmips[0], mip0, sizeof mip0) == 0);
     ASSERT_TRUE(memcmp(lmips[1], mip1, sizeof mip1) == 0);
+    ASSERT_TRUE(memcmp(ldepth, depth, sizeof depth) == 0);
     for (uint32_t m = 0; m < MIPS; ++m) free(lmips[m]);
+    free(ldepth);
 
     /* Corrupt magic -> rejected. */
     FILE *f = fopen(path, "r+b");
@@ -395,10 +405,10 @@ static int test_file_roundtrip(void)
     fwrite("XXXX", 1, 4, f);
     fclose(f);
     refl_probe_set_init(&ls, lp, 8u);
-    ASSERT_TRUE(!refl_file_load(path, &ls, lmips));
+    ASSERT_TRUE(!refl_file_load(path, &ls, lmips, &ldepth));
 
     /* Truncated file -> rejected (no partial buffers leaked back). */
-    ASSERT_TRUE(refl_file_save(path, &set, mips));
+    ASSERT_TRUE(refl_file_save(path, &set, mips, depth));
     f = fopen(path, "rb");
     ASSERT_TRUE(f != NULL);
     fseek(f, 0, SEEK_END);
@@ -406,7 +416,7 @@ static int test_file_roundtrip(void)
     fclose(f);
     ASSERT_TRUE(truncate(path, full / 2) == 0);
     refl_probe_set_init(&ls, lp, 8u);
-    ASSERT_TRUE(!refl_file_load(path, &ls, lmips));
+    ASSERT_TRUE(!refl_file_load(path, &ls, lmips, &ldepth));
     return 0;
 }
 

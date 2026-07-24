@@ -30,11 +30,13 @@ extern "C" {
 /** GPU handles + layout mirror for binding. */
 typedef struct refl_gpu {
     uint32_t atlas;      /**< RGBA16F 2D atlas with set->mips levels. */
+    uint32_t depth_tex;  /**< RG32F octa visibility-depth atlas (1 level). */
     uint32_t meta_buf;   /**< TBO backing buffer. */
     uint32_t meta_tex;   /**< RGBA32F buffer texture over meta_buf. */
     uint32_t count;      /**< probe count (0 = disabled). */
     uint32_t mips;
     uint32_t tile_res;
+    uint32_t depth_res;  /**< depth tile edge (0 = no visibility test). */
     float gain;          /**< artist gain applied in the shader. */
     float range;         /**< probe influence radius in metres. */
     /* GL entry points (loaded in upload). */
@@ -52,16 +54,17 @@ typedef struct refl_gpu {
  */
 bool refl_gpu_upload(refl_gpu_t *gpu, const gl_loader_t *loader,
                      const refl_probe_set_t *set,
-                     float *const mips[REFL_PROBE_MAX_MIPS]);
+                     float *const mips[REFL_PROBE_MAX_MIPS],
+                     const float *depth);
 
 /**
- * Bind atlas + meta and set the u_refl_* uniforms on @p program.
- * @p unit_atlas / @p unit_meta are the texture units to occupy. Safe on a
- * zeroed @p gpu (binds nothing, sets u_refl_count 0).
+ * Bind atlas + meta + visibility-depth and set the u_refl_* uniforms on
+ * @p program. @p unit_atlas / @p unit_meta / @p unit_depth are the texture
+ * units to occupy. Safe on a zeroed @p gpu (binds nothing, u_refl_count 0).
  */
 void refl_gpu_bind(const refl_gpu_t *gpu, shader_uniform_cache_t *cache,
                    const shader_program_t *program, uint32_t unit_atlas,
-                   uint32_t unit_meta);
+                   uint32_t unit_meta, uint32_t unit_depth);
 
 /** Delete GL objects; NULL-safe, idempotent. */
 void refl_gpu_destroy(refl_gpu_t *gpu);

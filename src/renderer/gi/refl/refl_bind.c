@@ -20,7 +20,8 @@
 
 bool refl_gpu_upload(refl_gpu_t *gpu, const gl_loader_t *loader,
                      const refl_probe_set_t *set,
-                     float *const mips[REFL_PROBE_MAX_MIPS])
+                     float *const mips[REFL_PROBE_MAX_MIPS],
+                     const float *depth)
 {
     if (gpu == NULL)
         return false;
@@ -70,6 +71,21 @@ bool refl_gpu_upload(refl_gpu_t *gpu, const gl_loader_t *loader,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL,
                     (int32_t)set->mips - 1);
+
+    /* Visibility-depth atlas (DDGI Chebyshev): RG32F, single level. */
+    if (set->depth_res > 0u && depth != NULL) {
+        glGenTextures(1, &gpu->depth_tex);
+        gpu->glBindTexture(GL_TEXTURE_2D, gpu->depth_tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RG32F,
+                     (int32_t)(set->tiles_x * set->depth_res),
+                     (int32_t)(set->tiles_y * set->depth_res), 0, GL_RG,
+                     GL_FLOAT, depth);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        gpu->depth_res = set->depth_res;
+    }
 
     /* Meta TBO: 2 RGBA32F texels per probe (load-time malloc, freed here). */
     float *meta = (float *)malloc((size_t)set->count * 8u * sizeof(float));
@@ -126,7 +142,7 @@ bool refl_gpu_upload(refl_gpu_t *gpu, const gl_loader_t *loader,
 
 void refl_gpu_bind(const refl_gpu_t *gpu, shader_uniform_cache_t *cache,
                    const shader_program_t *program, uint32_t unit_atlas,
-                   uint32_t unit_meta)
+                   uint32_t unit_meta, uint32_t unit_depth)
 {
     if (cache == NULL || program == NULL)
         return;
@@ -136,7 +152,13 @@ void refl_gpu_bind(const refl_gpu_t *gpu, shader_uniform_cache_t *cache,
         gpu->glBindTexture(GL_TEXTURE_2D, gpu->atlas);
         gpu->glActiveTexture(GL_TEXTURE0 + unit_meta);
         gpu->glBindTexture(GL_TEXTURE_BUFFER, gpu->meta_tex);
+        if (gpu->depth_tex != 0u) {
+            gpu->glActiveTexture(GL_TEXTURE0 + unit_depth);
+            gpu->glBindTexture(GL_TEXTURE_2D, gpu->depth_tex);
+        }
         gpu->glActiveTexture(GL_TEXTURE0);
+        shader_uniform_set_float(cache, program, "u_refl_depth_res",
+                                 (float)gpu->depth_res);
         count = (int32_t)gpu->count;
         shader_uniform_set_float(cache, program, "u_refl_mips",
                                  (float)gpu->mips);
@@ -150,6 +172,8 @@ void refl_gpu_bind(const refl_gpu_t *gpu, shader_uniform_cache_t *cache,
                            (int32_t)unit_atlas);
     shader_uniform_set_int(cache, program, "u_refl_meta",
                            (int32_t)unit_meta);
+    shader_uniform_set_int(cache, program, "u_refl_depth",
+                           (int32_t)unit_depth);
     shader_uniform_set_int(cache, program, "u_refl_count", count);
 }
 
@@ -159,10 +183,12 @@ void refl_gpu_destroy(refl_gpu_t *gpu)
         return;
     if (gpu->glDeleteTextures && gpu->atlas)
         gpu->glDeleteTextures(1, &gpu->atlas);
+    if (gpu->glDeleteTextures && gpu->depth_tex)
+        gpu->glDeleteTextures(1, &gpu->depth_tex);
     if (gpu->glDeleteTextures && gpu->meta_tex)
         gpu->glDeleteTextures(1, &gpu->meta_tex);
     if (gpu->glDeleteBuffers && gpu->meta_buf)
         gpu->glDeleteBuffers(1, &gpu->meta_buf);
-    gpu->atlas = gpu->meta_tex = gpu->meta_buf = 0;
+    gpu->atlas = gpu->depth_tex = gpu->meta_tex = gpu->meta_buf = 0;
     gpu->count = 0u;
 }

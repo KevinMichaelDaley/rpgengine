@@ -75,12 +75,13 @@ bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
     refl_bake_params_t prm = *prm_in;
     if (prm.spacing <= 0.0f) prm.spacing = 12.0f;
     if (prm.tile_res < 8u) prm.tile_res = 32u;
-    if (prm.face_res < 8u) prm.face_res = prm.tile_res;
+    if (prm.face_res < 8u) prm.face_res = prm.tile_res * 2u;  /* supersample */
     if (prm.mips == 0u || prm.mips > REFL_PROBE_MAX_MIPS) prm.mips = 4u;
     while ((prm.tile_res >> (prm.mips - 1u)) < 4u && prm.mips > 1u)
         prm.mips -= 1u;
     if (prm.max_probes == 0u) prm.max_probes = 1024u;
     if (prm.min_clear <= 0.0f) prm.min_clear = 0.75f;
+    if (prm.depth_res == 0u) prm.depth_res = 16u;
 
     float mn[3], mx[3];
     if (!scene_aabb(scene, mn, mx))
@@ -110,15 +111,27 @@ bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
     }
     set.tile_res = prm.tile_res;
     set.mips = prm.mips;
+    set.depth_res = prm.depth_res;
     set.tiles_x = 1u;
     while (set.tiles_x * set.tiles_x < set.count)
         set.tiles_x += 1u;
     set.tiles_y = (set.count + set.tiles_x - 1u) / set.tiles_x;
 
-    /* Transient CPU buffers (offline): faces, tile work set, atlas mips. */
+    /* Transient CPU buffers (offline): faces, tile work set, atlas mips,
+     * plus the raw-depth faces + RG visibility-depth atlas. */
     bool ok = true;
     size_t face_n = (size_t)prm.face_res * prm.face_res * 4u;
     float *faces_mem = (float *)malloc(face_n * 6u * sizeof(float));
+    size_t dface_n = (size_t)prm.face_res * prm.face_res;
+    float *dfaces_mem = (float *)malloc(dface_n * 6u * sizeof(float));
+    float *dpack = (float *)malloc(dface_n * 6u * 4u * sizeof(float));
+    size_t dtile_n = (size_t)prm.depth_res * prm.depth_res * 4u;
+    float *dtile = (float *)malloc(dtile_n * sizeof(float));
+    float *dtmp = (float *)malloc(dtile_n * sizeof(float));
+    uint32_t datlas_w = set.tiles_x * prm.depth_res;
+    uint32_t datlas_h = set.tiles_y * prm.depth_res;
+    float *datlas = (float *)calloc((size_t)datlas_w * datlas_h * 2u,
+                                    sizeof(float));
     size_t tile_n = (size_t)prm.tile_res * prm.tile_res * 4u;
     float *tile = (float *)malloc(tile_n * sizeof(float));
     float *tmp = (float *)malloc(tile_n * sizeof(float));
@@ -131,7 +144,8 @@ bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
         ok = ok && mips[m] != NULL;
     }
     ok = ok && faces_mem != NULL && tile != NULL && tmp != NULL &&
-         down != NULL;
+         down != NULL && dfaces_mem != NULL && dpack != NULL &&
+         dtile != NULL && dtmp != NULL && datlas != NULL;
 
     refl_bake_t rb;
     memset(&rb, 0, sizeof rb);
@@ -149,10 +163,70 @@ bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
             ? refl_occl_cone_fn(probe_chunk_sdf_sample, &cs, pr->pos, sd,
                                 0.08f, 120.0f)
             : 1.0f;
-        refl_bake_probe(&rb, scene, pr->pos, &prm, sun_vis, faces);
+        float *dfaces[6];
+        for (uint32_t f = 0; f < 6u; ++f)
+            dfaces[f] = dfaces_mem + (size_t)f * dface_n;
+        refl_bake_probe(&rb, scene, pr->pos, &prm, sun_vis, faces, dfaces);
+        /* Full-pipeline output is gamma-encoded for display: invert it so
+         * the atlas stores LINEAR radiance (re-gammaed at shade time). */
+        if (prm.render_fn != NULL)
+            for (uint32_t f = 0; f < 6u; ++f)
+                for (size_t t = 0; t < face_n; t += 4u) {
+                    faces[f][t + 0u] = powf(faces[f][t + 0u], 2.2f);
+                    faces[f][t + 1u] = powf(faces[f][t + 1u], 2.2f);
+                    faces[f][t + 2u] = powf(faces[f][t + 2u], 2.2f);
+                }
         const float *cfaces[6] = { faces[0], faces[1], faces[2],
                                    faces[3], faces[4], faces[5] };
         refl_octa_from_cube(cfaces, prm.face_res, tile, prm.tile_res);
+
+        /* Visibility depth (DDGI-style): raw hardware depth -> RADIAL
+         * linear distance per face texel (clamped to 2x the influence
+         * range so open sky cannot blow the Chebyshev variance), packed as
+         * (r, r^2), octa-resampled to the depth tile, one smoothing pass,
+         * then blitted into the RG atlas. */
+        {
+            const float zn = 0.05f, zf = 500.0f;
+            float dclamp = prm.spacing * 2.0f;
+            for (uint32_t f = 0; f < 6u; ++f)
+                for (uint32_t y = 0; y < prm.face_res; ++y)
+                    for (uint32_t x = 0; x < prm.face_res; ++x) {
+                        float z = dfaces[f][(size_t)y * prm.face_res + x];
+                        float lin = zn * zf / (zf - z * (zf - zn));
+                        float sc = 2.0f * (((float)x + 0.5f) /
+                                           (float)prm.face_res) - 1.0f;
+                        float tc = 2.0f * (((float)y + 0.5f) /
+                                           (float)prm.face_res) - 1.0f;
+                        float rad = lin * sqrtf(1.0f + sc*sc + tc*tc);
+                        if (rad > dclamp)
+                            rad = dclamp;
+                        float *o = &dpack[((size_t)f * dface_n +
+                                           (size_t)y * prm.face_res + x) *
+                                          4u];
+                        o[0] = rad;
+                        o[1] = rad * rad;
+                        o[2] = 0.0f;
+                        o[3] = 0.0f;
+                    }
+            const float *cdf[6] = {
+                dpack + 0u * dface_n * 4u, dpack + 1u * dface_n * 4u,
+                dpack + 2u * dface_n * 4u, dpack + 3u * dface_n * 4u,
+                dpack + 4u * dface_n * 4u, dpack + 5u * dface_n * 4u,
+            };
+            refl_octa_from_cube(cdf, prm.face_res, dtile, prm.depth_res);
+            refl_filter_smooth(dtile, prm.depth_res, 32.0f, dtmp);
+            uint32_t dx0 = (pr->tile % set.tiles_x) * prm.depth_res;
+            uint32_t dy0 = (pr->tile / set.tiles_x) * prm.depth_res;
+            for (uint32_t y = 0; y < prm.depth_res; ++y)
+                for (uint32_t x = 0; x < prm.depth_res; ++x) {
+                    float *o = &datlas[((size_t)(dy0 + y) * datlas_w +
+                                        (dx0 + x)) * 2u];
+                    const float *i2 =
+                        &dtile[((size_t)y * prm.depth_res + x) * 4u];
+                    o[0] = i2[0];
+                    o[1] = i2[1];
+                }
+        }
 
         uint32_t res = prm.tile_res;
         float ao_sum = 0.0f;
@@ -208,7 +282,7 @@ bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
         const float *cmips[REFL_PROBE_MAX_MIPS] = { 0 };
         for (uint32_t m = 0; m < set.mips; ++m)
             cmips[m] = mips[m];
-        ok = refl_file_save(path, &set, cmips);
+        ok = refl_file_save(path, &set, cmips, datlas);
         if (ok)
             fprintf(stderr,
                     "refl_bake: %u probes, tile %u, %u mips -> %s\n",
@@ -219,6 +293,11 @@ bool refl_bake_run(const gl_loader_t *loader, const render_scene_t *scene,
 
     for (uint32_t m = 0; m < REFL_PROBE_MAX_MIPS; ++m)
         free(mips[m]);
+    free(datlas);
+    free(dtmp);
+    free(dtile);
+    free(dpack);
+    free(dfaces_mem);
     free(down);
     free(tmp);
     free(tile);

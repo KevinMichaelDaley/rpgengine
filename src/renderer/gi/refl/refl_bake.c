@@ -130,7 +130,8 @@ static void rb_face_view(uint32_t face, const float p[3], mat4_t *out)
 
 void refl_bake_probe(refl_bake_t *rb, const render_scene_t *scene,
                      const float pos[3], const refl_bake_params_t *prm,
-                     float sun_vis, float *faces[6])
+                     float sun_vis, float *faces[6],
+                     float *depth_faces[6])
 {
     if (rb == NULL || scene == NULL || pos == NULL || prm == NULL ||
         faces == NULL)
@@ -140,6 +141,28 @@ void refl_bake_probe(refl_bake_t *rb, const render_scene_t *scene,
             return;
     mat4_t proj;
     mat4_perspective(1.57079633f, 1.0f, 0.05f, 500.0f, &proj);
+
+    /* Full-pipeline path: the callback owns the whole render (shadow
+     * pre-passes included); this side only owns the target + readback. */
+    if (prm->render_fn != NULL) {
+        for (uint32_t f = 0; f < 6u; ++f) {
+            mat4_t view;
+            rb_face_view(f, pos, &view);
+            prm->render_fn(prm->render_user, rb->fbo, view.m, proj.m, pos,
+                           rb->face_res);
+            rb->glBindFramebuffer(GL_FRAMEBUFFER, rb->fbo);
+            rb->glFinish();
+            rb->glReadPixels(0, 0, (int32_t)rb->face_res,
+                             (int32_t)rb->face_res, GL_RGBA, GL_FLOAT,
+                             faces[f]);
+            if (depth_faces != NULL && depth_faces[f] != NULL)
+                rb->glReadPixels(0, 0, (int32_t)rb->face_res,
+                                 (int32_t)rb->face_res, GL_DEPTH_COMPONENT,
+                                 GL_FLOAT, depth_faces[f]);
+        }
+        rb->glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        return;
+    }
 
     rb->glBindFramebuffer(GL_FRAMEBUFFER, rb->fbo);
     rb->glViewport(0, 0, (int32_t)rb->face_res, (int32_t)rb->face_res);
@@ -197,6 +220,10 @@ void refl_bake_probe(refl_bake_t *rb, const render_scene_t *scene,
         rb->glFinish();
         rb->glReadPixels(0, 0, (int32_t)rb->face_res, (int32_t)rb->face_res,
                          GL_RGBA, GL_FLOAT, faces[f]);
+        if (depth_faces != NULL && depth_faces[f] != NULL)
+            rb->glReadPixels(0, 0, (int32_t)rb->face_res,
+                             (int32_t)rb->face_res, GL_DEPTH_COMPONENT,
+                             GL_FLOAT, depth_faces[f]);
     }
     rb->glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }

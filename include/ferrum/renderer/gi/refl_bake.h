@@ -38,6 +38,21 @@ typedef struct refl_bake_params {
     float sun_dir[3];     /**< world direction TOWARD the sun. */
     float sun_color[3];   /**< sun radiance. */
     float ambient[3];     /**< sky irradiance for the hemispherical term. */
+    uint32_t depth_res;   /**< octa visibility-depth tile edge (default 16). */
+    /**
+     * Optional FULL-PIPELINE face renderer: when set, each cube face is
+     * rendered by this callback INSTEAD of the built-in minimal lit shader
+     * -- bind @p fbo as the pipeline target, render the scene with the
+     * given camera (column-major view/proj, eye, square face_res viewport)
+     * and leave the result in the fbo attachments. This is how the bake
+     * gets the real forward shader (shadows, lightmaps, GI, textures) for
+     * mirror reflections; the readback then inverts the forward gamma to
+     * store linear radiance.
+     */
+    void (*render_fn)(void *user, uint32_t fbo, const float view[16],
+                      const float proj[16], const float eye[3],
+                      uint32_t face_res);
+    void *render_user;    /**< passed through to render_fn. */
 } refl_bake_params_t;
 
 /** GL state for the cube pass (function pointers + FBO + shader). */
@@ -88,13 +103,18 @@ bool refl_bake_init(refl_bake_t *rb, const gl_loader_t *loader,
 /**
  * Render the scene from @p pos into six RGBA32F faces (GL face order),
  * each face_res^2*4 floats into @p faces[f] (caller-owned, non-NULL).
- * Lighting: albedo(tint) * (sun N.L * @p sun_vis + hemispherical ambient)
- * + emissive. @p sun_vis is the SDF sun visibility at the probe (0..1) --
- * enclosed probes must not bake a false unshadowed sun.
+ * Via prm->render_fn when set (the full forward pipeline); otherwise the
+ * built-in minimal shader: albedo(tint) * (sun N.L * @p sun_vis +
+ * hemispherical ambient) + emissive, where @p sun_vis is the SDF sun
+ * visibility at the probe (enclosed probes must not bake a false
+ * unshadowed sun). @p depth_faces (nullable, six face_res^2 float
+ * buffers) receives each face's RAW hardware depth for the
+ * visibility-depth bake.
  */
 void refl_bake_probe(refl_bake_t *rb, const render_scene_t *scene,
                      const float pos[3], const refl_bake_params_t *prm,
-                     float sun_vis, float *faces[6]);
+                     float sun_vis, float *faces[6],
+                     float *depth_faces[6]);
 
 /** Destroy GL objects; NULL-safe, idempotent. */
 void refl_bake_destroy(refl_bake_t *rb);

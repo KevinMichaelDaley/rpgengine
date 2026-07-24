@@ -42,6 +42,7 @@ typedef struct refl_probe_set {
     uint32_t mips;         /**< filtered mip levels (1..REFL_PROBE_MAX_MIPS). */
     uint32_t tiles_x;      /**< atlas tile-grid width. */
     uint32_t tiles_y;      /**< atlas tile-grid height. */
+    uint32_t depth_res;    /**< octa visibility-depth tile edge (0 = none). */
 } refl_probe_set_t;
 
 /**

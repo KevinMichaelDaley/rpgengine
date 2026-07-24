@@ -10,21 +10,23 @@
 
 #include "ferrum/renderer/gi/refl_atlas.h"
 
-static const char RFP_MAGIC[4] = { 'R', 'F', 'P', '1' };
+static const char RFP_MAGIC[4] = { 'R', 'F', 'P', '2' };
 
 bool refl_file_save(const char *path, const refl_probe_set_t *set,
-                    const float *const mips[])
+                    const float *const mips[], const float *depth)
 {
     if (path == NULL || set == NULL || mips == NULL || set->mips == 0u ||
         set->mips > REFL_PROBE_MAX_MIPS || set->tiles_x == 0u ||
         set->tiles_y == 0u || set->tile_res == 0u)
         return false;
+    if (set->depth_res > 0u && depth == NULL)
+        return false;
     FILE *f = fopen(path, "wb");
     if (f == NULL)
         return false;
     bool ok = fwrite(RFP_MAGIC, 1, 4, f) == 4;
-    uint32_t hdr[5] = { set->count, set->tile_res, set->mips, set->tiles_x,
-                        set->tiles_y };
+    uint32_t hdr[6] = { set->count, set->tile_res, set->mips, set->tiles_x,
+                        set->tiles_y, set->depth_res };
     ok = ok && fwrite(hdr, sizeof hdr, 1, f) == 1;
     for (uint32_t i = 0; ok && i < set->count; ++i) {
         const refl_probe_t *p = &set->probes[i];
@@ -39,20 +41,26 @@ bool refl_file_save(const char *path, const refl_probe_set_t *set,
         size_t n = (size_t)w * h * 4u;
         ok = fwrite(mips[m], sizeof(float), n, f) == n;
     }
+    if (ok && set->depth_res > 0u) {
+        size_t n = (size_t)set->tiles_x * set->depth_res *
+                   set->tiles_y * set->depth_res * 2u;
+        ok = fwrite(depth, sizeof(float), n, f) == n;
+    }
     return (fclose(f) == 0) && ok;
 }
 
 bool refl_file_load(const char *path, refl_probe_set_t *set,
-                    float *out_mips[REFL_PROBE_MAX_MIPS])
+                    float *out_mips[REFL_PROBE_MAX_MIPS],
+                    float **out_depth)
 {
     if (path == NULL || set == NULL || set->probes == NULL ||
-        out_mips == NULL)
+        out_mips == NULL || out_depth == NULL)
         return false;
     FILE *f = fopen(path, "rb");
     if (f == NULL)
         return false;
     char magic[4];
-    uint32_t hdr[5];
+    uint32_t hdr[6];
     bool ok = fread(magic, 1, 4, f) == 4 &&
               memcmp(magic, RFP_MAGIC, 4) == 0 &&
               fread(hdr, sizeof hdr, 1, f) == 1;
@@ -66,6 +74,7 @@ bool refl_file_load(const char *path, refl_probe_set_t *set,
         set->mips = hdr[2];
         set->tiles_x = hdr[3];
         set->tiles_y = hdr[4];
+        set->depth_res = hdr[5];
     }
     for (uint32_t i = 0; ok && i < count; ++i) {
         refl_probe_t *p = &set->probes[i];
@@ -74,6 +83,7 @@ bool refl_file_load(const char *path, refl_probe_set_t *set,
              fread(&p->tile, sizeof(uint32_t), 1, f) == 1;
     }
     float *bufs[REFL_PROBE_MAX_MIPS] = { 0 };
+    float *dbuf = NULL;
     for (uint32_t m = 0; ok && m < set->mips; ++m) {
         uint32_t w, h;
         refl_atlas_dims(set, m, &w, &h);
@@ -82,14 +92,22 @@ bool refl_file_load(const char *path, refl_probe_set_t *set,
         ok = bufs[m] != NULL &&
              fread(bufs[m], sizeof(float), n, f) == n;
     }
+    if (ok && set->depth_res > 0u) {
+        size_t n = (size_t)set->tiles_x * set->depth_res *
+                   set->tiles_y * set->depth_res * 2u;
+        dbuf = (float *)malloc(n * sizeof(float));
+        ok = dbuf != NULL && fread(dbuf, sizeof(float), n, f) == n;
+    }
     fclose(f);
     if (!ok) {
         for (uint32_t m = 0; m < REFL_PROBE_MAX_MIPS; ++m)
             free(bufs[m]);
+        free(dbuf);
         set->count = 0u;
         return false;
     }
     for (uint32_t m = 0; m < REFL_PROBE_MAX_MIPS; ++m)
         out_mips[m] = bufs[m];
+    *out_depth = dbuf;
     return true;
 }

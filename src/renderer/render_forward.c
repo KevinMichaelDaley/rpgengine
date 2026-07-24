@@ -194,6 +194,7 @@ static void fwd_forward_submit(void *ud)
         /* Reflection-probe samplers (rpg-akwc): unit 35 + 41, count 0. */
         shader_uniform_set_int(&f->cache, &f->pbr, "u_refl_atlas", 35);
         shader_uniform_set_int(&f->cache, &f->pbr, "u_refl_meta", 41);
+        shader_uniform_set_int(&f->cache, &f->pbr, "u_refl_depth", 42);
         shader_uniform_set_int(&f->cache, &f->pbr, "u_refl_count", 0);
     }
 
