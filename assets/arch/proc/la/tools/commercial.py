@@ -46,6 +46,7 @@ import bpy
 
 from .. import params
 from .. import topology
+from . import doors as doorkit
 from . import elements as el2
 from .storefront import emit_rollup, emit_security_bars, emit_storefront_bay
 from ..geom import (
@@ -1084,11 +1085,21 @@ def build_minimall(p, rng):
                 return 'void'
             return cls_m_base2(u0, zc0)
 
+    # B1.4 (rpg-20cn): real door leafs hang in every doorL opening --
+    # storefront glass singles/pairs on the fronts and balcony rows,
+    # hollow-metal man-doors on the service walls; a seeded fraction
+    # stands ajar (dead-mall tie-in).  One shared filler per style keeps
+    # the rng draws inside the deterministic fill order.
+    aj = p.get("door_ajar", 0.15)
+    leaf_glass = doorkit.glass_leaf_filler(rng, aj)
+    leaf_slab = doorkit.man_door_filler(rng, min(1.0, aj * 0.7))
+
     fw_lines = [v for v in xl if wx - 1e-9 <= v <= Wm + 1e-9]
     _wf = _Wall(shell, (0, 0, 0), (1, 0, 0), fw_lines, zl,
                 (0, -1, 0), M_STUCCO, thickness=thick, inner_zmax=iz_max)
     _wf.inner_u0, _wf.inner_u1 = wx + wt, Wm - (0.0 if corner else wt)
-    _wf.fill(cls_m, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS)
+    _wf.fill(cls_m, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS,
+             leaf=leaf_glass)
     # storefront-bay dressing (rpg-a1ep): checkerboard tile piers + bulkhead,
     # aluminium mullions/transom/head channel, entry door frame -- applied
     # PROUD of the wall plane on every OPEN front bay. Left pier per bay
@@ -1223,7 +1234,8 @@ def build_minimall(p, rng):
                      M_STUCCO, thickness=thick, inner_zmax=iz_max)
         _wa2.inner_u0, _wa2.inner_u1 = wt, Wy
         _wa2.fill(_with_pass_door(cls_a2) if mid_pass else cls_a2,
-                  frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS)
+                  frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS,
+                  leaf=leaf_glass)
         shell.tag = 'facade_side'
         if xa['ox1'] <= 0.0:
             # west arm: its outer plane is the building's west wall.
@@ -1241,7 +1253,7 @@ def build_minimall(p, rng):
             _wo2.inner_u0, _wo2.inner_u1 = wt, Wy
             _wo2.fill(_with_pass_door(plain_wall) if mid_pass
                       else plain_wall, frame=0.06, mat_frame=M_TRIM,
-                      mat_pane=M_GLASS)
+                      mat_pane=M_GLASS, leaf=leaf_glass)
         # south end wall.
         _ws2 = _Wall(shell, (0, -Wy, 0), (1, 0, 0),
                      [v for v in xl if xa['ox0'] - 1e-9 <= v <=
@@ -1260,7 +1272,8 @@ def build_minimall(p, rng):
                     [v + Wy for v in yl if v <= 0.0 + 1e-9], zl, (-1, 0, 0),
                     M_STUCCO, thickness=thick, inner_zmax=iz_max)
         _ww.inner_u0, _ww.inner_u1 = wt, Wy - 0.0
-        _ww.fill(cls_wing, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS)
+        _ww.fill(cls_wing, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS,
+                 leaf=leaf_glass)
 
     # ---- rear + side walls -------------------------------------------------
     shell.tag = 'facade_back'
@@ -1290,7 +1303,7 @@ def build_minimall(p, rng):
     _wr = _Wall(shell, (0, D, 0), (1, 0, 0), xl, zl, (0, 1, 0),
                 M_STUCCO, thickness=thick, inner_zmax=iz_max)
     _wr.inner_u0, _wr.inner_u1 = x_min + wt, We - wt
-    _wr.fill(rear_classify, frame=0.06, mat_frame=M_TRIM)
+    _wr.fill(rear_classify, frame=0.06, mat_frame=M_TRIM, leaf=leaf_slab)
     # inset dock wells: the A1/loggia recess discipline mirrored onto the
     # rear wall (outward +y, recess depth 0.6 INTO the building).
     if docks_on:
@@ -1404,7 +1417,8 @@ def build_minimall(p, rng):
                      (-c1d / L2, -c1d / L2, 0), M_STUCCO,
                      thickness=thick, inner_zmax=iz_max)
         _wch.inner_u0, _wch.inner_u1 = 0.25, L2 - 0.25
-        _wch.fill(cham_cls, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS)
+        _wch.fill(cham_cls, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS,
+                  leaf=leaf_glass)
     if corner:
         # wing south end y=-Wy (faces -y), x Wm..We.
         _wsx = _Wall(shell, (0, -Wy, 0), (1, 0, 0),
@@ -1437,7 +1451,8 @@ def build_minimall(p, rng):
         _we = _Wall(shell, (We, 0, 0), (0, 1, 0), yl, zl, (1, 0, 0),
                     M_STUCCO, thickness=thick, inner_zmax=iz_max)
         _we.inner_u0, _we.inner_u1 = -Wy + wt, D - wt
-        _we.fill(rear_classify_w, frame=0.06, mat_frame=M_TRIM)
+        _we.fill(rear_classify_w, frame=0.06, mat_frame=M_TRIM,
+                 leaf=leaf_slab)
     else:
         _we = _Wall(shell, (Wm, 0, 0), (0, 1, 0), yl, zl, (1, 0, 0),
                     M_STUCCO, thickness=thick, inner_zmax=iz_max)
@@ -1487,7 +1502,8 @@ def build_minimall(p, rng):
         _wl2 = _Wall(shell, (0, ld2, 0), (1, 0, 0), lxl2, l_rows,
                      (0, -1, 0), M_STUCCO, thickness=thick,
                      inner_zmax=iz_max)
-        _wl2.fill(_lg_cls, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS)
+        _wl2.fill(_lg_cls, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS,
+                  leaf=leaf_glass)
         if interior_on:
             for (fx0, fx1) in ((max(o0r - wt, wt + 0.05), o0r),
                                (o1r, min(o1r + wt, Wm - wt - 0.05))):
@@ -2198,12 +2214,13 @@ def build_minimall(p, rng):
         _wa = _Wall(ash, (0, AF, 0), (1, 0, 0), axl, zla, (0, -1, 0),
                     M_STUCCO, thickness=thick, inner_zmax=zA_ceil)
         _wa.inner_u0, _wa.inner_u1 = ax0 + wt, ax1 - wt
-        _wa.fill(a_front, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS)
+        _wa.fill(a_front, frame=0.06, mat_frame=M_TRIM, mat_pane=M_GLASS,
+                 leaf=leaf_glass)
         ash.tag = 'facade_back'
         _wb = _Wall(ash, (0, D, 0), (1, 0, 0), axl, zla, (0, 1, 0),
                     M_STUCCO, thickness=thick, inner_zmax=zA_ceil)
         _wb.inner_u0, _wb.inner_u1 = ax0 + wt, ax1 - wt
-        _wb.fill(a_rear, frame=0.06, mat_frame=M_TRIM)
+        _wb.fill(a_rear, frame=0.06, mat_frame=M_TRIM, leaf=leaf_slab)
         ash.tag = 'facade_side'
         for (sx4, nrm4) in ((ax0, (-1, 0, 0)), (ax1, (1, 0, 0))):
             _wsa = _Wall(ash, (sx4, 0, 0), (0, 1, 0),
@@ -2637,6 +2654,9 @@ SPEC = [
     dict(name="high_bulkhead", type='FLOAT', default=0.4, min=0.0, max=1.0,
          desc="Fraction of storefronts on a 0.9 m masonry knee wall "
               "(glazing and roll-ups stop there instead of grade)"),
+    dict(name="door_ajar", type='FLOAT', default=0.15, min=0.0, max=1.0,
+         desc="Seeded fraction of door leafs standing ajar (glass "
+              "storefront pairs, rear man-doors) -- dead-mall tie-in"),
     dict(name="loading_docks", type='BOOL', default=True,
          desc="Heavy sectional dock doors on the rear at truck-sill "
               "height (some inset into recessed wells), platform at the "

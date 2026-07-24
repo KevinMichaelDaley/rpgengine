@@ -1,6 +1,6 @@
 ---
 id: rpg-20cn
-status: open
+status: in_progress
 deps: [rpg-ezcn]
 links: []
 created: 2026-07-22T05:10:54Z

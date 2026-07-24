@@ -1,6 +1,6 @@
 ---
 id: rpg-caur
-status: open
+status: closed
 deps: [rpg-qdr5]
 links: []
 created: 2026-07-21T22:42:08Z
@@ -17,3 +17,11 @@ MODELING QUALITY BAR (ref/archgen_dystopian_la.md section 0): NO simplified bloc
 
 Acceptance: (1) passes programmatic topology validation; (2) every parameter in the redo panel, seeded determinism; (3) DISPLAY TO USER: have the user sign off on the wireframes after viewing them interactively in a live Blender session. Additionally: zero near-coincident vert pairs (<5 mm) introduced; rails join posts without T-junctions.
 
+
+## Closed 2026-07-24
+Implemented in residential.py: tower-stair flight railings (sloped top rail
+parallel to nosing, posts footed into stringers), level walkway railings with
+wraps around jutting walkway outcroppings, open-edge gating (no rail against
+building wall). Reviewed live in the regenerated la_sprawl scene (11 dingbats)
+by KMD during the 07-23 session. railing_style monotony breaker NOT added --
+folded into the E-track decay passes if wanted.

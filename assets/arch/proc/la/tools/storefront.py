@@ -29,6 +29,7 @@ from ..geom import (
     M_CONCRETE, M_GLASS, M_GYPSUM, M_METAL, M_SHUTTER, M_SIGN_A, M_SIGN_B,
     M_SIGN_C, M_STUCCO, M_TRIM,
 )
+from . import doors as doorkit
 from . import elements as el
 
 
@@ -155,7 +156,8 @@ def emit_storefront_bay(sh, x0, x1, yw, door, head, bulkhead=0.62,
                         tile=0.19, mullion_pitch=0.95, transom=2.2,
                         piers=(True, True), glass=False,
                         bulkhead_style='checker', glazing='mullioned',
-                        door_dressing=True, glaze_dressing=True):
+                        door_dressing=True, glaze_dressing=True,
+                        door_leaf=False, door_ajar=0.0):
     """Dress one storefront bay on the wall plane y=yw (faces -y). See the
     module docstring for the parameter axes. glazing='plate' emits bars only
     at the span ends (big butt-glazed sheets, faint 4 mm joint bars)."""
@@ -211,21 +213,22 @@ def emit_storefront_bay(sh, x0, x1, yw, door, head, bulkhead=0.62,
          (x1 + 0.006, yw + 0.03, head + 0.015), M_METAL)         # head
 
     if door is not None and door_dressing:
+        # jamb posts + head rail: the proud aluminium frame extrusions the
+        # leaf hangs in.  The leaf itself (stile/rail frame, glass islands,
+        # push bar -- B1.4, rpg-20cn) is a REAL door: emitted here only when
+        # door_leaf is set (the standalone bay); the mini-mall hangs its
+        # leafs from the _Wall doorL fill instead.
         (d0, d1) = door
         for fx in (d0 + 0.004, d1 - 0.059):
             _box(sh, (fx, yw - 0.032, 0.0), (fx + 0.055, yw + 0.084,
                  transom - 0.03), M_METAL)
         _box(sh, (d0 + 0.044, yw - 0.030, transom - 0.085),
              (d1 - 0.044, yw + 0.077, transom - 0.032), M_METAL)
-        _box(sh, (d0 + 0.045, yw - 0.026, 0.98),
-             (d1 - 0.045, yw + 0.012, 1.06), M_METAL)
-        _box(sh, (d0 + 0.045, yw - 0.024, 0.01),
-             (d1 - 0.045, yw + 0.014, 0.30), M_METAL)
-        if glass:
-            sh.quad((d0 + 0.05, yw + 0.018, 0.32),
-                    (d1 - 0.05, yw + 0.018, 0.32),
-                    (d1 - 0.05, yw + 0.018, transom - 0.09),
-                    (d0 + 0.05, yw + 0.018, transom - 0.09), M_GLASS)
+        if door_leaf:
+            doorkit.emit_glass_leaf(sh, (0.0, yw, 0.0), (1.0, 0.0, 0.0),
+                                    (0.0, -1.0, 0.0), d0 + 0.059,
+                                    d1 - 0.059, 0.0, transom - 0.085,
+                                    depth=0.04, ajar=door_ajar)
 
     if glass:                                       # display + transom glass
         for (sa, sb) in spans:
@@ -276,6 +279,8 @@ STOREFRONT_SPEC = [
          desc="plate = large butt-glazed sheets"),
     dict(name="door_pos", type='ENUM', default='left',
          items=('left', 'center', 'right', 'none')),
+    dict(name="door_ajar", type='FLOAT', default=0.0, min=0.0, max=1.0,
+         desc="Swing the entry leaf open (1 = ~70 degrees)"),
     dict(name="rollup", type='ENUM', default='none',
          items=('none', 'closed', 'half', 'door'),
          desc="Roll-up REPLACES the glazing (closed) / the door (door)"),
@@ -403,7 +408,8 @@ def build_storefront_bay(p, rng):
         emit_storefront_bay(sh, 0.0, w, 0.0, door, head, bulkhead=bh,
                             tile=p["tile"], glass=True,
                             bulkhead_style=p["bulkhead_style"],
-                            glazing=p["glazing"])
+                            glazing=p["glazing"], door_leaf=True,
+                            door_ajar=p["door_ajar"] * 1.2)
         if ru == 'half':
             # raised curtain in front of the glazing, inside the opening.
             emit_rollup(sh, 0.085, w - 0.085, -0.062, head - 0.085,

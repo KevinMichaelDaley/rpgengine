@@ -1,6 +1,6 @@
 ---
 id: rpg-ro7o
-status: open
+status: closed
 deps: [rpg-ezcn]
 links: []
 created: 2026-07-22T05:10:54Z
@@ -17,3 +17,9 @@ The office-strip access stair currently has stringers and treads but no railings
 
 Live Blender review + audit-clean (validate_object ok) across office-strip variants incl. projecting/mixed balconies.
 
+
+## Closed 2026-07-24
+Implemented in commercial.py (_flight_railing, _rail_u + jut wraps): stair flight
+handrails on both stringers, deck-rail terminations, railing wraps around
+projecting balcony outcroppings, joined at stairs. Reviewed live in the
+regenerated la_sprawl scene (4 mini-malls) by KMD during the 07-23 session.

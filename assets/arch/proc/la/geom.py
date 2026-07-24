@@ -159,6 +159,30 @@ def _box(shell, mn, mx, mat=0):
     shell.quad((x1, y0, z0), (x1, y1, z0), (x1, y1, z1), (x1, y0, z1), mat)  # +x
 
 
+def _hexa(shell, base, ev, ew, v0, v1, w0, w1, z0, z1, mat=0):
+    """Closed 6-quad box spanned by two horizontal unit Vectors ``ev``/``ew``
+    and global z: corner = base + ev*v + ew*w + (0,0,z).  Winding adapts to
+    the pair's handedness so normals always face out.  The oriented sibling
+    of _box -- door leafs (hinged at any ajar angle) and boxes on angled
+    walls use it."""
+    def pt(v, w, z):
+        p = base + ev * v + ew * w
+        return (p.x, p.y, p.z + z)
+    flip = (ev.x * ew.y - ev.y * ew.x) < 0.0
+
+    def q(a, b, c, d):
+        if flip:
+            shell.quad(a, d, c, b, mat)
+        else:
+            shell.quad(a, b, c, d, mat)
+    q(pt(v0, w0, z0), pt(v0, w1, z0), pt(v1, w1, z0), pt(v1, w0, z0))  # bottom
+    q(pt(v0, w0, z1), pt(v1, w0, z1), pt(v1, w1, z1), pt(v0, w1, z1))  # top
+    q(pt(v0, w0, z0), pt(v1, w0, z0), pt(v1, w0, z1), pt(v0, w0, z1))  # -w
+    q(pt(v0, w1, z0), pt(v0, w1, z1), pt(v1, w1, z1), pt(v1, w1, z0))  # +w
+    q(pt(v0, w0, z0), pt(v0, w0, z1), pt(v0, w1, z1), pt(v0, w1, z0))  # -v
+    q(pt(v1, w0, z0), pt(v1, w1, z0), pt(v1, w1, z1), pt(v1, w0, z1))  # +v
+
+
 def _wall_solid(shell, axis, at, a0, a1, zlo, zhi, t=0.09, door=None, mat=0):
     """ONE manifold all-quad wall solid along @p axis ('x' or 'y'), spanning
     @p a0..a1 at cross position @p at, thickness @p t. @p door = (g0, g1, dh)
@@ -373,7 +397,11 @@ class _Wall:
             self.s.quad(a, d, c, b, m)
 
     def fill(self, classify, frame=0.07, recess=0.08,
-             mat_frame=None, mat_pane=None):
+             mat_frame=None, mat_pane=None, leaf=None):
+        """``leaf``: optional callback ``(wall, u0, u1, z0, z1, depth)``
+        invoked once per merged doorL opening AFTER its reveal is cut --
+        the B1.4 door-leaf emitters hang real doors in the hole.  None
+        (the default) keeps the opening bare (walk-through)."""
         for iz in range(len(self.zl) - 1):
             for iu in range(len(self.ul) - 1):
                 kind = classify(self.ul[iu], self.zl[iz])
@@ -438,6 +466,8 @@ class _Wall:
                             self._q(self._co(ua2, z0, 0.0), self._co(ua2, z0, depth),
                                     self._co(ub2, z0, depth), self._co(ub2, z0, 0.0),
                                     M_CONCRETE)   # through-floor strip
+                    if leaf is not None:
+                        leaf(self, u0, u1r, z0, z1t, depth)
                     self.s.tag = keep
                     continue
                 if kind == 'wall':
@@ -567,6 +597,30 @@ class _Wall:
                                              recess * 0.2),
                                     self._co(fu0 + e2, za3 + step,
                                              recess * 0.2), M_METAL)
+                        # B1.4 hardware (rpg-20cn): jamb roller tracks,
+                        # hinge plates at every panel joint, a bottom lift
+                        # handle -- boxes floating between the panel plane
+                        # (recess*0.55) and the rib plane (recess*0.2), so
+                        # nothing is ever coplanar with the curtain quads.
+                        for ut in (fu0 + 0.006, fu1 - 0.050):
+                            _hexa(self.s, self.o, self.u, self.n,
+                                  ut, ut + 0.044,
+                                  -recess * 0.46, -recess * 0.30,
+                                  fz0 + e2, fz1 - e2, M_METAL)
+                        span = (fu1 - 0.10) - (fu0 + 0.10)
+                        for si4 in range(1, nseg):
+                            zj = fz0 + e2 + step * si4 - rib * 0.5
+                            for kp in range(3):
+                                pa = fu0 + 0.10 + (span - 0.10) * kp / 2.0
+                                _hexa(self.s, self.o, self.u, self.n,
+                                      pa, pa + 0.10,
+                                      -recess * 0.185, -recess * 0.10,
+                                      zj - 0.045, zj + 0.045, M_METAL)
+                        ucn = (fu0 + fu1) * 0.5
+                        _hexa(self.s, self.o, self.u, self.n,
+                              ucn - 0.12, ucn + 0.12,
+                              -recess * 0.50, -recess * 0.30,
+                              fz0 + 0.10, fz0 + 0.16, M_METAL)
                     self.s.tag = keep2s
                 elif kind == 'window_awning':
                     swing = -0.22
