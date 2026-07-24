@@ -1,0 +1,3086 @@
+{
+ "name": "great_hall",
+ "materials": [
+  {
+   "name": "great_hall_floor_stone",
+   "tint": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "metalness": 0.0,
+   "opacity": 1.0,
+   "roughness_min": 0.0,
+   "roughness_max": 1.0,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    0.23809523809523808,
+    0.23809523809523808
+   ],
+   "albedo": "materials/great_hall_floor_stone/albedo.png",
+   "normal": "materials/great_hall_floor_stone/normal.png",
+   "roughness": "materials/great_hall_floor_stone/roughness.png"
+  },
+  {
+   "name": "great_hall_stone_wall",
+   "tint": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "metalness": 0.0,
+   "opacity": 1.0,
+   "roughness_min": 0.0,
+   "roughness_max": 1.0,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    0.2222222222222222,
+    0.3846153846153846
+   ],
+   "albedo": "materials/great_hall_stone_wall/albedo.png",
+   "normal": "materials/great_hall_stone_wall/normal.png",
+   "roughness": "materials/great_hall_stone_wall/roughness.png"
+  },
+  {
+   "name": "great_hall_reveal_weave",
+   "tint": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "metalness": 0.0,
+   "opacity": 1.0,
+   "roughness_min": 0.0,
+   "roughness_max": 1.0,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    0.8333333333333334,
+    1.0
+   ],
+   "albedo": "materials/great_hall_reveal_weave/albedo.png",
+   "normal": "materials/great_hall_reveal_weave/normal.png",
+   "roughness": "materials/great_hall_reveal_weave/roughness.png"
+  },
+  {
+   "name": "gh_glass_red",
+   "tint": [
+    0.550000011920929,
+    0.05000000074505806,
+    0.05000000074505806
+   ],
+   "metalness": 0.0,
+   "opacity": 0.45,
+   "roughness_min": 0.11999999731779099,
+   "roughness_max": 0.11999999731779099,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "gh_glass_blue",
+   "tint": [
+    0.05999999865889549,
+    0.10000000149011612,
+    0.5199999809265137
+   ],
+   "metalness": 0.0,
+   "opacity": 0.45,
+   "roughness_min": 0.11999999731779099,
+   "roughness_max": 0.11999999731779099,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "gh_glass_gold",
+   "tint": [
+    0.800000011920929,
+    0.5799999833106995,
+    0.10000000149011612
+   ],
+   "metalness": 0.0,
+   "opacity": 0.45,
+   "roughness_min": 0.11999999731779099,
+   "roughness_max": 0.11999999731779099,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "gh_glass_green",
+   "tint": [
+    0.05999999865889549,
+    0.3799999952316284,
+    0.10000000149011612
+   ],
+   "metalness": 0.0,
+   "opacity": 0.45,
+   "roughness_min": 0.11999999731779099,
+   "roughness_max": 0.11999999731779099,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "gh_glass_violet",
+   "tint": [
+    0.3400000035762787,
+    0.07999999821186066,
+    0.4399999976158142
+   ],
+   "metalness": 0.0,
+   "opacity": 0.45,
+   "roughness_min": 0.11999999731779099,
+   "roughness_max": 0.11999999731779099,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "gh_glass_pale",
+   "tint": [
+    0.6200000047683716,
+    0.6800000071525574,
+    0.7200000286102295
+   ],
+   "metalness": 0.0,
+   "opacity": 0.45,
+   "roughness_min": 0.11999999731779099,
+   "roughness_max": 0.11999999731779099,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "gh_lead_came",
+   "tint": [
+    0.07000000029802322,
+    0.07000000029802322,
+    0.07999999821186066
+   ],
+   "metalness": 0.0,
+   "opacity": 1.0,
+   "roughness_min": 0.11999999731779099,
+   "roughness_max": 0.11999999731779099,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "name": "great_hall_timber",
+   "tint": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "metalness": 0.0,
+   "opacity": 1.0,
+   "roughness_min": 0.0,
+   "roughness_max": 1.0,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ],
+   "albedo": "materials/great_hall_timber/albedo.png",
+   "normal": "materials/great_hall_timber/normal.png",
+   "roughness": "materials/great_hall_timber/roughness.png"
+  },
+  {
+   "name": "great_hall_roof_limestone",
+   "tint": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "metalness": 0.0,
+   "opacity": 1.0,
+   "roughness_min": 0.0,
+   "roughness_max": 1.0,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    0.5,
+    0.5
+   ],
+   "albedo": "materials/great_hall_roof_limestone/albedo.png",
+   "normal": "materials/great_hall_roof_limestone/normal.png",
+   "roughness": "materials/great_hall_roof_limestone/roughness.png"
+  },
+  {
+   "name": "great_hall_banner",
+   "tint": [
+    0.8799999952316284,
+    0.012000000104308128,
+    0.012000000104308128
+   ],
+   "metalness": 0.0,
+   "opacity": 1.0,
+   "roughness_min": 0.8999999761581421,
+   "roughness_max": 0.8999999761581421,
+   "normal_scale": 1.0,
+   "ao_strength": 1.0,
+   "uv_scale": [
+    1.0,
+    1.0
+   ]
+  }
+ ],
+ "objects": [
+  {
+   "name": "great_hall_collar_0",
+   "mesh": "meshes/great_hall_collar_0.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 72,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_collar_1",
+   "mesh": "meshes/great_hall_collar_1.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 72,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_collar_2",
+   "mesh": "meshes/great_hall_collar_2.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 72,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_collar_3",
+   "mesh": "meshes/great_hall_collar_3.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 72,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_collar_4",
+   "mesh": "meshes/great_hall_collar_4.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 72,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_collar_5",
+   "mesh": "meshes/great_hall_collar_5.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 72,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_dais",
+   "mesh": "meshes/great_hall_dais.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_floor_stone"
+   ],
+   "lightmap_res": 140,
+   "vertices": 216,
+   "faces": 108,
+   "building": true
+  },
+  {
+   "name": "great_hall_dais_arch",
+   "mesh": "meshes/great_hall_dais_arch.fvma",
+   "position": [
+    18.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    -0.0,
+    -0.7071067690849304,
+    0.0,
+    0.7071067690849304
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 160,
+   "vertices": 719,
+   "faces": 378,
+   "building": true
+  },
+  {
+   "name": "great_hall_dais_step_0",
+   "mesh": "meshes/great_hall_dais_step_0.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_floor_stone"
+   ],
+   "lightmap_res": 120,
+   "vertices": 216,
+   "faces": 108,
+   "building": true
+  },
+  {
+   "name": "great_hall_dais_step_1",
+   "mesh": "meshes/great_hall_dais_step_1.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_floor_stone"
+   ],
+   "lightmap_res": 120,
+   "vertices": 216,
+   "faces": 108,
+   "building": true
+  },
+  {
+   "name": "great_hall_dais_step_door_0",
+   "mesh": "meshes/great_hall_dais_step_door_0.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_floor_stone"
+   ],
+   "lightmap_res": 32,
+   "vertices": 216,
+   "faces": 108,
+   "building": true
+  },
+  {
+   "name": "great_hall_dais_step_door_1",
+   "mesh": "meshes/great_hall_dais_step_door_1.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_floor_stone"
+   ],
+   "lightmap_res": 32,
+   "vertices": 216,
+   "faces": 108,
+   "building": true
+  },
+  {
+   "name": "great_hall_dresp_l",
+   "mesh": "meshes/great_hall_dresp_l.fvma",
+   "position": [
+    18.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    -0.0,
+    -0.7071067690849304,
+    0.0,
+    0.7071067690849304
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 69,
+   "vertices": 1440,
+   "faces": 750,
+   "building": true
+  },
+  {
+   "name": "great_hall_dresp_r",
+   "mesh": "meshes/great_hall_dresp_r.fvma",
+   "position": [
+    18.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    -0.0,
+    -0.7071067690849304,
+    0.0,
+    0.7071067690849304
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 69,
+   "vertices": 1440,
+   "faces": 750,
+   "building": true
+  },
+  {
+   "name": "great_hall_dvolt",
+   "mesh": "meshes/great_hall_dvolt.fvma",
+   "position": [
+    18.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    -0.0,
+    -0.7071067690849304,
+    0.0,
+    0.7071067690849304
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 87,
+   "vertices": 9162,
+   "faces": 4614,
+   "building": true
+  },
+  {
+   "name": "great_hall_entrance",
+   "mesh": "meshes/great_hall_entrance.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.7071067690849304,
+    -0.0,
+    0.7071067690849304
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 160,
+   "vertices": 791,
+   "faces": 402,
+   "building": true
+  },
+  {
+   "name": "great_hall_floor",
+   "mesh": "meshes/great_hall_floor.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_floor_stone"
+   ],
+   "lightmap_res": 380,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_fp_chevron",
+   "mesh": "meshes/great_hall_fp_chevron.fvma",
+   "position": [
+    16.200000762939453,
+    0.0,
+    -3.396385431289673
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 48,
+   "vertices": 3638,
+   "faces": 1816,
+   "building": true
+  },
+  {
+   "name": "great_hall_fp_frieze",
+   "mesh": "meshes/great_hall_fp_frieze.fvma",
+   "position": [
+    16.200000762939453,
+    0.0,
+    -3.396385431289673
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 58,
+   "vertices": 616,
+   "faces": 308,
+   "building": true
+  },
+  {
+   "name": "great_hall_fp_hearth",
+   "mesh": "meshes/great_hall_fp_hearth.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 70,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_fp_hood",
+   "mesh": "meshes/great_hall_fp_hood.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 180,
+   "vertices": 107,
+   "faces": 40,
+   "building": true
+  },
+  {
+   "name": "great_hall_fp_label",
+   "mesh": "meshes/great_hall_fp_label.fvma",
+   "position": [
+    16.200000762939453,
+    0.0,
+    -3.396385431289673
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 56,
+   "vertices": 140,
+   "faces": 76,
+   "building": true
+  },
+  {
+   "name": "great_hall_fp_opening",
+   "mesh": "meshes/great_hall_fp_opening.fvma",
+   "position": [
+    16.200000762939453,
+    0.0,
+    -3.396385431289673
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 60,
+   "vertices": 134,
+   "faces": 66,
+   "building": true
+  },
+  {
+   "name": "great_hall_fp_plinth_L",
+   "mesh": "meshes/great_hall_fp_plinth_L.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 20,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_fp_plinth_R",
+   "mesh": "meshes/great_hall_fp_plinth_R.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 20,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_fp_roll",
+   "mesh": "meshes/great_hall_fp_roll.fvma",
+   "position": [
+    16.200000762939453,
+    0.0,
+    -3.396385431289673
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 41,
+   "vertices": 140,
+   "faces": 76,
+   "building": true
+  },
+  {
+   "name": "great_hall_glass_N_0",
+   "mesh": "meshes/great_hall_glass_N_0.fvma",
+   "position": [
+    1.7999999523162842,
+    0.0,
+    -4.0
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "gh_glass_red",
+    "gh_glass_blue",
+    "gh_glass_gold",
+    "gh_glass_green",
+    "gh_glass_violet",
+    "gh_glass_pale",
+    "gh_lead_came"
+   ],
+   "lightmap_res": 63,
+   "vertices": 470,
+   "faces": 216,
+   "building": true
+  },
+  {
+   "name": "great_hall_glass_N_1",
+   "mesh": "meshes/great_hall_glass_N_1.fvma",
+   "position": [
+    5.400000095367432,
+    0.0,
+    -4.0
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "gh_glass_red",
+    "gh_glass_blue",
+    "gh_glass_gold",
+    "gh_glass_green",
+    "gh_glass_violet",
+    "gh_glass_pale",
+    "gh_lead_came"
+   ],
+   "lightmap_res": 63,
+   "vertices": 470,
+   "faces": 216,
+   "building": true
+  },
+  {
+   "name": "great_hall_glass_N_2",
+   "mesh": "meshes/great_hall_glass_N_2.fvma",
+   "position": [
+    9.0,
+    0.0,
+    -4.0
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "gh_glass_red",
+    "gh_glass_blue",
+    "gh_glass_gold",
+    "gh_glass_green",
+    "gh_glass_violet",
+    "gh_glass_pale",
+    "gh_lead_came"
+   ],
+   "lightmap_res": 63,
+   "vertices": 470,
+   "faces": 216,
+   "building": true
+  },
+  {
+   "name": "great_hall_glass_N_3",
+   "mesh": "meshes/great_hall_glass_N_3.fvma",
+   "position": [
+    12.600000381469727,
+    0.0,
+    -4.0
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "gh_glass_red",
+    "gh_glass_blue",
+    "gh_glass_gold",
+    "gh_glass_green",
+    "gh_glass_violet",
+    "gh_glass_pale",
+    "gh_lead_came"
+   ],
+   "lightmap_res": 63,
+   "vertices": 470,
+   "faces": 216,
+   "building": true
+  },
+  {
+   "name": "great_hall_glass_S_0",
+   "mesh": "meshes/great_hall_glass_S_0.fvma",
+   "position": [
+    1.7999999523162842,
+    0.0,
+    4.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "gh_glass_red",
+    "gh_glass_blue",
+    "gh_glass_gold",
+    "gh_glass_green",
+    "gh_glass_violet",
+    "gh_glass_pale",
+    "gh_lead_came"
+   ],
+   "lightmap_res": 63,
+   "vertices": 470,
+   "faces": 216,
+   "building": true
+  },
+  {
+   "name": "great_hall_glass_S_1",
+   "mesh": "meshes/great_hall_glass_S_1.fvma",
+   "position": [
+    5.400000095367432,
+    0.0,
+    4.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "gh_glass_red",
+    "gh_glass_blue",
+    "gh_glass_gold",
+    "gh_glass_green",
+    "gh_glass_violet",
+    "gh_glass_pale",
+    "gh_lead_came"
+   ],
+   "lightmap_res": 63,
+   "vertices": 470,
+   "faces": 216,
+   "building": true
+  },
+  {
+   "name": "great_hall_glass_S_2",
+   "mesh": "meshes/great_hall_glass_S_2.fvma",
+   "position": [
+    9.0,
+    0.0,
+    4.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "gh_glass_red",
+    "gh_glass_blue",
+    "gh_glass_gold",
+    "gh_glass_green",
+    "gh_glass_violet",
+    "gh_glass_pale",
+    "gh_lead_came"
+   ],
+   "lightmap_res": 63,
+   "vertices": 470,
+   "faces": 216,
+   "building": true
+  },
+  {
+   "name": "great_hall_glass_S_3",
+   "mesh": "meshes/great_hall_glass_S_3.fvma",
+   "position": [
+    12.600000381469727,
+    0.0,
+    4.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "gh_glass_red",
+    "gh_glass_blue",
+    "gh_glass_gold",
+    "gh_glass_green",
+    "gh_glass_violet",
+    "gh_glass_pale",
+    "gh_lead_came"
+   ],
+   "lightmap_res": 63,
+   "vertices": 470,
+   "faces": 216,
+   "building": true
+  },
+  {
+   "name": "great_hall_glass_S_4",
+   "mesh": "meshes/great_hall_glass_S_4.fvma",
+   "position": [
+    16.200000762939453,
+    0.0,
+    4.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "gh_glass_red",
+    "gh_glass_blue",
+    "gh_glass_gold",
+    "gh_glass_green",
+    "gh_glass_violet",
+    "gh_glass_pale",
+    "gh_lead_came"
+   ],
+   "lightmap_res": 63,
+   "vertices": 470,
+   "faces": 216,
+   "building": true
+  },
+  {
+   "name": "great_hall_king_0",
+   "mesh": "meshes/great_hall_king_0.fvma",
+   "position": [
+    0.0,
+    8.470000267028809,
+    5.960464477539063e-08
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 65,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_king_1",
+   "mesh": "meshes/great_hall_king_1.fvma",
+   "position": [
+    3.5999999046325684,
+    8.470000267028809,
+    5.960464477539063e-08
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 65,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_king_2",
+   "mesh": "meshes/great_hall_king_2.fvma",
+   "position": [
+    7.199999809265137,
+    8.470000267028809,
+    5.960464477539063e-08
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 65,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_king_3",
+   "mesh": "meshes/great_hall_king_3.fvma",
+   "position": [
+    10.800000190734863,
+    8.470000267028809,
+    5.960464477539063e-08
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 65,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_king_4",
+   "mesh": "meshes/great_hall_king_4.fvma",
+   "position": [
+    14.399999618530273,
+    8.470000267028809,
+    5.960464477539063e-08
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 65,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_king_5",
+   "mesh": "meshes/great_hall_king_5.fvma",
+   "position": [
+    18.0,
+    8.470000267028809,
+    5.960464477539063e-08
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 65,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_lamp_vous_0",
+   "mesh": "meshes/great_hall_lamp_vous_0.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 16,
+   "vertices": 548,
+   "faces": 196,
+   "building": true
+  },
+  {
+   "name": "great_hall_lamp_vous_1",
+   "mesh": "meshes/great_hall_lamp_vous_1.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 16,
+   "vertices": 548,
+   "faces": 196,
+   "building": true
+  },
+  {
+   "name": "great_hall_lamp_vous_door",
+   "mesh": "meshes/great_hall_lamp_vous_door.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 30,
+   "vertices": 534,
+   "faces": 196,
+   "building": true
+  },
+  {
+   "name": "great_hall_pier_N_0",
+   "mesh": "meshes/great_hall_pier_N_0.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -3.75
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 128,
+   "vertices": 336,
+   "faces": 184,
+   "building": true
+  },
+  {
+   "name": "great_hall_pier_N_1",
+   "mesh": "meshes/great_hall_pier_N_1.fvma",
+   "position": [
+    3.5999999046325684,
+    0.0,
+    -3.75
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 128,
+   "vertices": 336,
+   "faces": 184,
+   "building": true
+  },
+  {
+   "name": "great_hall_pier_N_2",
+   "mesh": "meshes/great_hall_pier_N_2.fvma",
+   "position": [
+    7.199999809265137,
+    0.0,
+    -3.75
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 128,
+   "vertices": 336,
+   "faces": 184,
+   "building": true
+  },
+  {
+   "name": "great_hall_pier_N_3",
+   "mesh": "meshes/great_hall_pier_N_3.fvma",
+   "position": [
+    10.800000190734863,
+    0.0,
+    -3.75
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 128,
+   "vertices": 336,
+   "faces": 184,
+   "building": true
+  },
+  {
+   "name": "great_hall_pier_N_4",
+   "mesh": "meshes/great_hall_pier_N_4.fvma",
+   "position": [
+    14.399999618530273,
+    0.0,
+    -3.75
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 128,
+   "vertices": 336,
+   "faces": 184,
+   "building": true
+  },
+  {
+   "name": "great_hall_pier_N_5",
+   "mesh": "meshes/great_hall_pier_N_5.fvma",
+   "position": [
+    18.0,
+    0.0,
+    -3.75
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 128,
+   "vertices": 336,
+   "faces": 184,
+   "building": true
+  },
+  {
+   "name": "great_hall_pier_S_0",
+   "mesh": "meshes/great_hall_pier_S_0.fvma",
+   "position": [
+    0.0,
+    0.0,
+    3.75
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 128,
+   "vertices": 336,
+   "faces": 184,
+   "building": true
+  },
+  {
+   "name": "great_hall_pier_S_1",
+   "mesh": "meshes/great_hall_pier_S_1.fvma",
+   "position": [
+    3.5999999046325684,
+    0.0,
+    3.75
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 128,
+   "vertices": 336,
+   "faces": 184,
+   "building": true
+  },
+  {
+   "name": "great_hall_pier_S_2",
+   "mesh": "meshes/great_hall_pier_S_2.fvma",
+   "position": [
+    7.199999809265137,
+    0.0,
+    3.75
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 128,
+   "vertices": 336,
+   "faces": 184,
+   "building": true
+  },
+  {
+   "name": "great_hall_pier_S_3",
+   "mesh": "meshes/great_hall_pier_S_3.fvma",
+   "position": [
+    10.800000190734863,
+    0.0,
+    3.75
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 128,
+   "vertices": 336,
+   "faces": 184,
+   "building": true
+  },
+  {
+   "name": "great_hall_pier_S_4",
+   "mesh": "meshes/great_hall_pier_S_4.fvma",
+   "position": [
+    14.399999618530273,
+    0.0,
+    3.75
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 128,
+   "vertices": 336,
+   "faces": 184,
+   "building": true
+  },
+  {
+   "name": "great_hall_pier_S_5",
+   "mesh": "meshes/great_hall_pier_S_5.fvma",
+   "position": [
+    18.0,
+    0.0,
+    3.75
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 128,
+   "vertices": 336,
+   "faces": 184,
+   "building": true
+  },
+  {
+   "name": "great_hall_plinth_E_0",
+   "mesh": "meshes/great_hall_plinth_E_0.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 140,
+   "vertices": 216,
+   "faces": 108,
+   "building": true
+  },
+  {
+   "name": "great_hall_plinth_E_1",
+   "mesh": "meshes/great_hall_plinth_E_1.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 140,
+   "vertices": 216,
+   "faces": 108,
+   "building": true
+  },
+  {
+   "name": "great_hall_plinth_N_0",
+   "mesh": "meshes/great_hall_plinth_N_0.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 360,
+   "vertices": 216,
+   "faces": 108,
+   "building": true
+  },
+  {
+   "name": "great_hall_plinth_N_1",
+   "mesh": "meshes/great_hall_plinth_N_1.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 360,
+   "vertices": 216,
+   "faces": 108,
+   "building": true
+  },
+  {
+   "name": "great_hall_plinth_S_0",
+   "mesh": "meshes/great_hall_plinth_S_0.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 360,
+   "vertices": 216,
+   "faces": 108,
+   "building": true
+  },
+  {
+   "name": "great_hall_plinth_S_1",
+   "mesh": "meshes/great_hall_plinth_S_1.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 360,
+   "vertices": 216,
+   "faces": 108,
+   "building": true
+  },
+  {
+   "name": "great_hall_plinth_W_0",
+   "mesh": "meshes/great_hall_plinth_W_0.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 160,
+   "vertices": 216,
+   "faces": 108,
+   "building": true
+  },
+  {
+   "name": "great_hall_plinth_W_1",
+   "mesh": "meshes/great_hall_plinth_W_1.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 160,
+   "vertices": 216,
+   "faces": 108,
+   "building": true
+  },
+  {
+   "name": "great_hall_praf_0_L",
+   "mesh": "meshes/great_hall_praf_0_L.fvma",
+   "position": [
+    0.0,
+    8.300000190734863,
+    -2.011596441268921
+   ],
+   "rotation": [
+    0.408150851726532,
+    0.0,
+    -0.0,
+    0.912914514541626
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 108,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_praf_0_R",
+   "mesh": "meshes/great_hall_praf_0_R.fvma",
+   "position": [
+    0.0,
+    8.300000190734863,
+    2.011596441268921
+   ],
+   "rotation": [
+    -1.7840832811089058e-08,
+    -0.912914514541626,
+    0.4081507921218872,
+    3.990475860859988e-08
+   ],
+   "scale": [
+    1.0000004768371582,
+    1.0,
+    1.0000003576278687
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 108,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_praf_1_L",
+   "mesh": "meshes/great_hall_praf_1_L.fvma",
+   "position": [
+    3.5999999046325684,
+    8.300000190734863,
+    -2.011596441268921
+   ],
+   "rotation": [
+    0.408150851726532,
+    0.0,
+    -0.0,
+    0.912914514541626
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 108,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_praf_1_R",
+   "mesh": "meshes/great_hall_praf_1_R.fvma",
+   "position": [
+    3.5999999046325684,
+    8.300000190734863,
+    2.011596441268921
+   ],
+   "rotation": [
+    -1.7840832811089058e-08,
+    -0.912914514541626,
+    0.4081507921218872,
+    3.990475860859988e-08
+   ],
+   "scale": [
+    1.0000004768371582,
+    1.0,
+    1.0000003576278687
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 108,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_praf_2_L",
+   "mesh": "meshes/great_hall_praf_2_L.fvma",
+   "position": [
+    7.199999809265137,
+    8.300000190734863,
+    -2.011596441268921
+   ],
+   "rotation": [
+    0.408150851726532,
+    0.0,
+    -0.0,
+    0.912914514541626
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 108,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_praf_2_R",
+   "mesh": "meshes/great_hall_praf_2_R.fvma",
+   "position": [
+    7.199999809265137,
+    8.300000190734863,
+    2.011596441268921
+   ],
+   "rotation": [
+    -1.7840832811089058e-08,
+    -0.912914514541626,
+    0.4081507921218872,
+    3.990475860859988e-08
+   ],
+   "scale": [
+    1.0000004768371582,
+    1.0,
+    1.0000003576278687
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 108,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_praf_3_L",
+   "mesh": "meshes/great_hall_praf_3_L.fvma",
+   "position": [
+    10.800000190734863,
+    8.300000190734863,
+    -2.011596441268921
+   ],
+   "rotation": [
+    0.408150851726532,
+    0.0,
+    -0.0,
+    0.912914514541626
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 108,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_praf_3_R",
+   "mesh": "meshes/great_hall_praf_3_R.fvma",
+   "position": [
+    10.800000190734863,
+    8.300000190734863,
+    2.011596441268921
+   ],
+   "rotation": [
+    -1.7840832811089058e-08,
+    -0.912914514541626,
+    0.4081507921218872,
+    3.990475860859988e-08
+   ],
+   "scale": [
+    1.0000004768371582,
+    1.0,
+    1.0000003576278687
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 108,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_praf_4_L",
+   "mesh": "meshes/great_hall_praf_4_L.fvma",
+   "position": [
+    14.399999618530273,
+    8.300000190734863,
+    -2.011596441268921
+   ],
+   "rotation": [
+    0.408150851726532,
+    0.0,
+    -0.0,
+    0.912914514541626
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 108,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_praf_4_R",
+   "mesh": "meshes/great_hall_praf_4_R.fvma",
+   "position": [
+    14.399999618530273,
+    8.300000190734863,
+    2.011596441268921
+   ],
+   "rotation": [
+    -1.7840832811089058e-08,
+    -0.912914514541626,
+    0.4081507921218872,
+    3.990475860859988e-08
+   ],
+   "scale": [
+    1.0000004768371582,
+    1.0,
+    1.0000003576278687
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 108,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_praf_5_L",
+   "mesh": "meshes/great_hall_praf_5_L.fvma",
+   "position": [
+    18.0,
+    8.300000190734863,
+    -2.011596441268921
+   ],
+   "rotation": [
+    0.408150851726532,
+    0.0,
+    -0.0,
+    0.912914514541626
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 108,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_praf_5_R",
+   "mesh": "meshes/great_hall_praf_5_R.fvma",
+   "position": [
+    18.0,
+    8.300000190734863,
+    2.011596441268921
+   ],
+   "rotation": [
+    -1.7840832811089058e-08,
+    -0.912914514541626,
+    0.4081507921218872,
+    3.990475860859988e-08
+   ],
+   "scale": [
+    1.0000004768371582,
+    1.0,
+    1.0000003576278687
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 108,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_purlin_N",
+   "mesh": "meshes/great_hall_purlin_N.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 360,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_purlin_S",
+   "mesh": "meshes/great_hall_purlin_S.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 360,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_purlin_ridge",
+   "mesh": "meshes/great_hall_purlin_ridge.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 360,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_roof",
+   "mesh": "meshes/great_hall_roof.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_roof_limestone"
+   ],
+   "lightmap_res": 373,
+   "vertices": 102,
+   "faces": 40,
+   "building": true
+  },
+  {
+   "name": "great_hall_tie_0",
+   "mesh": "meshes/great_hall_tie_0.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 172,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_tie_1",
+   "mesh": "meshes/great_hall_tie_1.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 172,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_tie_2",
+   "mesh": "meshes/great_hall_tie_2.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 172,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_tie_3",
+   "mesh": "meshes/great_hall_tie_3.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 172,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_tie_4",
+   "mesh": "meshes/great_hall_tie_4.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 172,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_tie_5",
+   "mesh": "meshes/great_hall_tie_5.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_timber"
+   ],
+   "lightmap_res": 172,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_wall_N_4",
+   "mesh": "meshes/great_hall_wall_N_4.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall"
+   ],
+   "lightmap_res": 130,
+   "vertices": 24,
+   "faces": 12,
+   "building": true
+  },
+  {
+   "name": "great_hall_win_N_0",
+   "mesh": "meshes/great_hall_win_N_0.fvma",
+   "position": [
+    1.7999999523162842,
+    0.0,
+    -4.0
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall",
+    "great_hall_reveal_weave"
+   ],
+   "lightmap_res": 130,
+   "vertices": 1204,
+   "faces": 602,
+   "building": true
+  },
+  {
+   "name": "great_hall_win_N_1",
+   "mesh": "meshes/great_hall_win_N_1.fvma",
+   "position": [
+    5.400000095367432,
+    0.0,
+    -4.0
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall",
+    "great_hall_reveal_weave"
+   ],
+   "lightmap_res": 130,
+   "vertices": 1204,
+   "faces": 602,
+   "building": true
+  },
+  {
+   "name": "great_hall_win_N_2",
+   "mesh": "meshes/great_hall_win_N_2.fvma",
+   "position": [
+    9.0,
+    0.0,
+    -4.0
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall",
+    "great_hall_reveal_weave"
+   ],
+   "lightmap_res": 130,
+   "vertices": 1204,
+   "faces": 602,
+   "building": true
+  },
+  {
+   "name": "great_hall_win_N_3",
+   "mesh": "meshes/great_hall_win_N_3.fvma",
+   "position": [
+    12.600000381469727,
+    0.0,
+    -4.0
+   ],
+   "rotation": [
+    -0.0,
+    -1.0,
+    0.0,
+    4.371138828673793e-08
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall",
+    "great_hall_reveal_weave"
+   ],
+   "lightmap_res": 130,
+   "vertices": 1204,
+   "faces": 602,
+   "building": true
+  },
+  {
+   "name": "great_hall_win_S_0",
+   "mesh": "meshes/great_hall_win_S_0.fvma",
+   "position": [
+    1.7999999523162842,
+    0.0,
+    4.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall",
+    "great_hall_reveal_weave"
+   ],
+   "lightmap_res": 130,
+   "vertices": 1204,
+   "faces": 602,
+   "building": true
+  },
+  {
+   "name": "great_hall_win_S_1",
+   "mesh": "meshes/great_hall_win_S_1.fvma",
+   "position": [
+    5.400000095367432,
+    0.0,
+    4.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall",
+    "great_hall_reveal_weave"
+   ],
+   "lightmap_res": 130,
+   "vertices": 1204,
+   "faces": 602,
+   "building": true
+  },
+  {
+   "name": "great_hall_win_S_2",
+   "mesh": "meshes/great_hall_win_S_2.fvma",
+   "position": [
+    9.0,
+    0.0,
+    4.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall",
+    "great_hall_reveal_weave"
+   ],
+   "lightmap_res": 130,
+   "vertices": 1204,
+   "faces": 602,
+   "building": true
+  },
+  {
+   "name": "great_hall_win_S_3",
+   "mesh": "meshes/great_hall_win_S_3.fvma",
+   "position": [
+    12.600000381469727,
+    0.0,
+    4.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall",
+    "great_hall_reveal_weave"
+   ],
+   "lightmap_res": 130,
+   "vertices": 1204,
+   "faces": 602,
+   "building": true
+  },
+  {
+   "name": "great_hall_win_S_4",
+   "mesh": "meshes/great_hall_win_S_4.fvma",
+   "position": [
+    16.200000762939453,
+    0.0,
+    4.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_stone_wall",
+    "great_hall_reveal_weave"
+   ],
+   "lightmap_res": 130,
+   "vertices": 1204,
+   "faces": 602,
+   "building": true
+  },
+  {
+   "name": "great_hall_banner",
+   "mesh": "meshes/great_hall_banner.fvma",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "scale": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "materials": [
+    "great_hall_banner"
+   ],
+   "lightmap_res": 36,
+   "vertices": 1440,
+   "faces": 480,
+   "dynamic": true,
+   "building": true
+  }
+ ],
+ "lights": [
+  {
+   "kind": "directional",
+   "name": "great_hall_sun",
+   "position": [
+    0.0,
+    0.0,
+    -0.0
+   ],
+   "direction": [
+    -0.5570453405380249,
+    -0.6020491719245911,
+    -0.5720465779304504
+   ],
+   "color": [
+    1.0,
+    1.0,
+    1.0
+   ],
+   "intensity": 20.0,
+   "flags": [
+    "baked",
+    "dynamic_indirect",
+    "shadow",
+    "probe_gi"
+   ]
+  },
+  {
+   "kind": "point",
+   "name": "great_hall_fire",
+   "position": [
+    15.883374214172363,
+    1.5434937477111816,
+    -3.2470264434814453
+   ],
+   "direction": [
+    0.0,
+    -1.0,
+    -0.0
+   ],
+   "color": [
+    1.0,
+    0.44999998807907104,
+    0.15000000596046448
+   ],
+   "intensity": 280.0,
+   "range": 6.0,
+   "radius": 0.20000000298023224,
+   "flags": [
+    "realtime",
+    "dynamic_indirect",
+    "probe_gi",
+    "shadow"
+   ]
+  },
+  {
+   "kind": "point",
+   "name": "great_hall_niche_0",
+   "position": [
+    17.44780921936035,
+    3.3230342864990234,
+    -2.5173983573913574
+   ],
+   "direction": [
+    0.0,
+    -1.0,
+    -0.0
+   ],
+   "color": [
+    1.0,
+    0.6200000047683716,
+    0.2800000011920929
+   ],
+   "intensity": 210.0,
+   "range": 5.0,
+   "radius": 0.10000000149011612,
+   "flags": [
+    "realtime",
+    "dynamic_indirect",
+    "probe_gi",
+    "shadow"
+   ]
+  },
+  {
+   "kind": "point",
+   "name": "great_hall_niche_1",
+   "position": [
+    17.44780921936035,
+    3.3230342864990234,
+    2.5173983573913574
+   ],
+   "direction": [
+    0.0,
+    -1.0,
+    -0.0
+   ],
+   "color": [
+    1.0,
+    0.6200000047683716,
+    0.2800000011920929
+   ],
+   "intensity": 210.0,
+   "range": 5.0,
+   "radius": 0.10000000149011612,
+   "flags": [
+    "realtime",
+    "dynamic_indirect",
+    "probe_gi",
+    "shadow"
+   ]
+  }
+ ],
+ "colliders": [
+  {
+   "kind": "box",
+   "name": "great_hall_banner",
+   "static": false,
+   "position": [
+    17.642309188842773,
+    3.7100000381469727,
+    -0.0
+   ],
+   "rotation": [
+    0.0,
+    0.0,
+    -0.0,
+    1.0
+   ],
+   "half_extents": [
+    0.07519054412841797,
+    0.8899999856948853,
+    0.6200000047683716
+   ]
+  }
+ ],
+ "lightmap": {
+  "prefix": "great_hall.flm",
+  "perchunk": false,
+  "manifest": ""
+ },
+ "sdf": {
+  "prefix": "great_hall.flm"
+ },
+ "probes": {
+  "spacing": 1.1,
+  "vspacing": 0.8
+ }
+}

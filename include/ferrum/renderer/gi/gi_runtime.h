@@ -137,6 +137,8 @@ typedef struct gi_runtime {
     float            sky_ao_color[3];
     float            sky_ao_ref;
     float            spec_gain;   /**< probe specular master scale (0 = off). */
+    float            probe_gain;  /**< probe DIFFUSE ambient gain (default 1);
+                                   *   the runtime lever over frozen baked SH. */
     int              spec_lobes;  /**< SG lobes summed per probe (1..3; GI_SG_LOBES). */
     float            ao_mult;     /**< openness->AO multiply on indirect (0..1). */
     /* Probe visibility (Chebyshev) softening -- controls the per-probe light/dark
@@ -253,6 +255,12 @@ void gi_runtime_set_sky_ao(gi_runtime_t *gi, const float color[3], float ref, fl
 
 /** @brief Master scale for the probe SG specular reflection (rpg-hw75); 0 = off. */
 void gi_runtime_set_spec_gain(gi_runtime_t *gi, float gain);
+
+/**
+ * @brief Set the runtime gain on the probe DIFFUSE ambient (the gi_dyn term).
+ *        Clamped to >= 0; 1 = unity. @p gi must be non-NULL.
+ */
+void gi_runtime_set_probe_gain(gi_runtime_t *gi, float gain);
 
 /**
  * @brief Upload the offline brick sampling structure (bricks + validity + the

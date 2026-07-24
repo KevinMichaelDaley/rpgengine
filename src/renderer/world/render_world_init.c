@@ -69,6 +69,8 @@ bool render_world_init(render_world_t *rw, const render_world_config_t *cfg)
             if (cfg->has_sky_ao)
                 gi_runtime_set_sky_ao(&rw->gi, cfg->sky_ao_color, cfg->sky_ao_ref,
                                       cfg->sky_ao_mult);
+            if (cfg->has_probe_gain)
+                gi_runtime_set_probe_gain(&rw->gi, cfg->probe_gain);
             if (cfg->has_spec_gain)
                 gi_runtime_set_spec_gain(&rw->gi, cfg->spec_gain);
         }

@@ -109,6 +109,9 @@ typedef struct render_config {
 
     /* GI static/irradiance/spec/sky-AO weights. */
     float    static_baked_w, static_dyn_w, static_k, spec_gain;
+    float    gi_probe_gain;         /**< runtime gain on the probe (dynamic-set)
+                                     *   diffuse ambient -- the ONLY lever over
+                                     *   baked/frozen probe SH scenes. Default 1. */
     float    sky_ao_color[3], sky_ao_ref, sky_ao_mult;
 
     /* ---------------------------------------------------------------------

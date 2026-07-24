@@ -585,7 +585,7 @@ _GLASS_COLORS = [
 ]
 
 
-def _glass_material(name, rgb, opacity=0.65):
+def _glass_material(name, rgb, opacity=0.45):
     """Flat-tint glass material: the exporter emits solid materials as tint +
     roughness with no maps, and ``ferrum_opacity`` marks translucency (feeds
     the CSM translucency mask + the bake's transmission channel)."""

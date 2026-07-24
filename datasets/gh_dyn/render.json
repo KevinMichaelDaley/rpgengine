@@ -2,8 +2,6 @@
  "_mode": "great_hall: fully dynamic GI, no baked lightmap (stealth-dark).",
  "sh_enabled": 0,
  "sh_normal_bias": 0.9,
- "static_baked_w": 3.0,
- "static_dyn_w": 8.0,
  "gi_hybrid": 0,
  "gi_hero": 2,
  "gi_samples": 2048,
@@ -26,5 +24,8 @@
  "sdf_fp16": 1,
  "lm_fp16": 1,
  "gi_brick_shell": 2.0,
- "gi_brick_shell_levels": 3
+ "gi_brick_shell_levels": 3,
+ "static_dyn_w": 8.0,
+ "static_baked_w": 3.0,
+ "gi_probe_gain": 1.3
 }

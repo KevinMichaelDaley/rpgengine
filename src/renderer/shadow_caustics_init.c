@@ -90,9 +90,11 @@ static const char *const CS_TRACE =
     "  vec3 tx=normalize(cross(up,dir)); vec3 ty=cross(dir,tx);\n"
     "  uint seed=uint(px.x)*7919u ^ uint(px.y)*104729u ^ uint(u_seed)*2654435761u ^ 0x9e3779b9u;\n"
     "  float k=(u_scatter_dist>0.0)?(u_scatter/u_scatter_dist):0.0;\n"
-    "  uint eR=uint(m.r*m.a*" SC_SCALE "/float(u_samples)+0.5);\n"
-    "  uint eG=uint(m.g*m.a*" SC_SCALE "/float(u_samples)+0.5);\n"
-    "  uint eB=uint(m.b*m.a*" SC_SCALE "/float(u_samples)+0.5);\n"
+    /* Mask rgb is PREMULTIPLIED transmission (coverage * tint * transmitted\n"
+     * fraction) since the stained-glass fix -- it IS the energy to splat. */
+    "  uint eR=uint(m.r*" SC_SCALE "/float(u_samples)+0.5);\n"
+    "  uint eG=uint(m.g*" SC_SCALE "/float(u_samples)+0.5);\n"
+    "  uint eB=uint(m.b*" SC_SCALE "/float(u_samples)+0.5);\n"
     "  for(int s=0;s<u_samples;++s){\n"
     /* Uniform disk jitter scaled so radius u_scatter is reached at\n"
      * u_scatter_dist metres along the ray. */

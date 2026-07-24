@@ -68,6 +68,7 @@ bool gi_runtime_init(gi_runtime_t *gi, const gi_runtime_config_t *cfg)
      * dynamic objects get the full static ambience. Overridable per demo. */
     gi->static_baked_w = 0.35f;
     gi->static_dyn_w = 1.0f;
+    gi->probe_gain = 1.0f;   /* probe diffuse ambient at unity until configured. */
     gi->sky_ao_ref = 6.0f;   /* sky_ao_color defaults to 0 (off) until set. */
     /* Probe-visibility softening (dot-artifact fix at dynamic-occluder edges).
      * Defaults are softer than the old hardcoded (0.15 bias, 1e-3 var, squared)
@@ -475,6 +476,8 @@ void gi_runtime_bind(const gi_runtime_t *gi, shader_uniform_cache_t *cache,
     shader_uniform_set_int(cache, program, "u_gi_enabled", 1);
     shader_uniform_set_float(cache, program, "u_gi_static_baked_w", gi->static_baked_w);
     shader_uniform_set_float(cache, program, "u_gi_static_dyn_w", gi->static_dyn_w);
+    shader_uniform_set_float(cache, program, "u_gi_probe_gain",
+                             gi->probe_gain > 0.0f ? gi->probe_gain : 1.0f);
     shader_uniform_set_int(cache, program, "u_probe_grid_on", gi->probe_grid_on);
     if (gi->probe_grid_on) {
         float dimf[3] = { (float)gi->probe_grid_dim[0], (float)gi->probe_grid_dim[1],

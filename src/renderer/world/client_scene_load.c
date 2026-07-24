@@ -652,6 +652,7 @@ bool client_scene_load(client_scene_t *cs, const gl_loader_t *loader,
     cfg.forward.dir_msaa = rc.dir_msaa;
     cfg.forward.dir_mask_res = rc.dir_mask_res;
     cfg.has_spec_gain = 1; cfg.spec_gain = rc.spec_gain;
+    cfg.has_probe_gain = 1; cfg.probe_gain = rc.gi_probe_gain;
 
     /* Fold the baked lightmap into the probes (built above) + sky-openness AO,
      * matching hall_lit_dynamic so shadowed interior surfaces get baked bounce. */

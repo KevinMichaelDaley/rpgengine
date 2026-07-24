@@ -82,6 +82,7 @@ typedef struct render_world_config {
     int          has_static_weights; float static_baked_w, static_dyn_w;
     int          has_sky_ao; float sky_ao_color[3], sky_ao_ref, sky_ao_mult;
     int          has_spec_gain; float spec_gain;
+    int          has_probe_gain; float probe_gain; /**< probe diffuse ambient gain. */
 } render_world_config_t;
 
 /** The assembled render world. Treat fields as read-only from outside. */

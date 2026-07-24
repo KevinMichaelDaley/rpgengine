@@ -354,9 +354,16 @@ static const char *const PBR_FS =
      * A short smoothstep over the gate band + the now-BILINEAR mask make the\n"
      * transmission a smooth field. */
     "  float behind = smoothstep(md + 0.25*gbias, md + 2.0*gbias, d);\n"
-    "  vec3 tr = (u_caustic_on==1)\n"
-    "    ? (vec3(1.0-m.a) + texture(u_csm_caustic, vec3(tuv, float(i))).rgb)\n"
-    "    : mix(vec3(1.0), m.rgb, m.a);\n"
+    /* The mask stores PREMULTIPLIED transmission (rgb = coverage * tint *\n"
+     * transmitted fraction) with a = spatial coverage. Covered area passes\n"
+     * only tinted energy; uncovered area passes white. The old\n"
+     * mix(white, tint, 1-opacity) leaked (opacity) of UNTINTED white -- the\n"
+     * more opaque the stained glass, the whiter its shadow (washed-out\n"
+     * pastels in the great hall) -- and the caustic path's white bypass\n"
+     * double-counted energy the trace already splats. */
+    "  vec3 tr = vec3(1.0 - m.a) + ((u_caustic_on==1)\n"
+    "    ? texture(u_csm_caustic, vec3(tuv, float(i))).rgb\n"
+    "    : m.rgb);\n"
     "  return mix(vec3(1.0), tr, behind);\n"
     "}\n"
     /* Glass transmission for one cascade: a SMALL bilinear disk (4 taps at half\n"
@@ -492,7 +499,7 @@ static const char *const PBR_FS =
     "        float dd = length(fragpos - u_dyn_eye) / u_dyn_far;\n"
     "        float md = texture(u_dyn_mask_depth, duv).r;\n"
     "        if(dd > md + 0.25 * u_dir_bias / u_dyn_far)\n"
-    "          vis = min(vis, mix(vec3(1.0), m.rgb, m.a));\n"
+    "          vis = min(vis, m.rgb + vec3(1.0 - m.a));\n"
     "      }\n"
     "    }\n"
     "  }\n"
@@ -516,6 +523,7 @@ static const char *const PBR_FS =
      * ambience. main() picks between them by u_sh_object. */
     "uniform float u_gi_static_baked_w;\n"
     "uniform float u_gi_static_dyn_w;\n"
+    "uniform float u_gi_probe_gain;\n" /* probe diffuse ambient gain (1 = unity). */
     /* Sky-openness AO (from the probe depth maps): openness * this colour is added
      * as ambient. u_gi_sky_ref is the overhead distance considered "fully open". */
     "uniform vec3 u_gi_sky_color;\n"
@@ -910,7 +918,7 @@ static const char *const PBR_FS =
      * the SG lobe the prefiltered specular reflection; the environment BRDF splits\n"
      * energy between them (kS specular, kD = (1-kS)(1-metal) diffuse) so the probes\n"
      * drive the WHOLE PBR response, not just diffuse. (kS/kD/Rspec above.) */
-    "  vec3 irr = gi_dyn + sgw*gi_stat;\n"
+    "  vec3 irr = u_gi_probe_gain*gi_dyn + sgw*gi_stat;\n"
     "  vec3 prefiltered = gi_probe_specular(v_world_pos, N, Rspec, rough);\n"
     "  vec3 diff_ibl = kD * albedo * irr / PI;\n"
     "  vec3 spec_ibl = kS * prefiltered;\n"

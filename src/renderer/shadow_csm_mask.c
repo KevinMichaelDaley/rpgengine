@@ -53,8 +53,13 @@ static const char *const SM_FS =
     "uniform float u_alpha;\n"
     "layout(location=0) out vec4 o_color;\n"
     "layout(location=1) out float o_depth;\n"
+    /* PREMULTIPLIED transmission: rgb = tint * transmitted fraction, a = 1\n"
+     * (glass present). MSAA resolve / bilinear then fade BOTH toward the\n"
+     * (0,0,0,0) clear at silhouettes, so a becomes pure spatial coverage and\n"
+     * the receiver reconstructs tr = rgb + (1-a)*white -- covered area passes\n"
+     * tinted energy, uncovered area passes white, with no coverage^2 error. */
     "void main(){\n"
-    "  o_color = vec4(u_tint, u_alpha);\n"
+    "  o_color = vec4(u_tint * u_alpha, 1.0);\n"
     "  o_depth = clamp(distance(v_world, u_eye) / u_far, 0.0, 1.0);\n"
     "}\n";
 

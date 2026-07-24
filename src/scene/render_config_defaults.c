@@ -81,6 +81,7 @@ void render_config_defaults(render_config_t *rc)
     /* Static-irradiance / spec / sky-AO weights. */
     rc->static_baked_w = 0.35f; rc->static_dyn_w = 3.0f;
     rc->static_k = 1.0f; rc->spec_gain = 1.0f;
+    rc->gi_probe_gain = 1.0f;           /* probe diffuse ambient at unity. */
     rc->sky_ao_color[0] = 0.15390f * 0.25f;
     rc->sky_ao_color[1] = 0.18851f * 0.25f;
     rc->sky_ao_color[2] = 0.25879f * 0.25f;
