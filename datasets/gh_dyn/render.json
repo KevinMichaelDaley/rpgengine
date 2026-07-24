@@ -27,5 +27,6 @@
  "gi_brick_shell_levels": 3,
  "static_dyn_w": 8.0,
  "static_baked_w": 3.0,
- "gi_probe_gain": 1.3
+ "gi_probe_gain": 1.3,
+ "sun_energy_scale": 0.6
 }

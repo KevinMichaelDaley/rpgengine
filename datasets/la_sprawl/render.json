@@ -28,5 +28,7 @@
  "gi_samples": 1024,
  "dir_softness": 1.8,
  "dir_pcf_taps": 16,
- "dir_caustics": 1
+ "dir_caustics": 1,
+ "sun_energy_scale": 0.6,
+ "gi_probe_gain": 1.3
 }
