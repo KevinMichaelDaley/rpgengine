@@ -1,6 +1,6 @@
 ---
 id: rpg-akwc
-status: open
+status: closed
 deps: []
 links: []
 created: 2026-07-24T09:49:21Z
@@ -64,3 +64,17 @@ alongside (not replacing) the dense SH/SG irradiance probes.
    fallback takes over.
 4. Perf: fragment cost within the existing GI budget knobs
    (render.json gated, default on for both test scenes).
+
+## Implemented 2026-07-24 (9539885f)
+Modules in src/renderer/gi/refl/ (octa map, atlas layout, progressive
+filter, SDF placement + occlusion cone, RFP1 file, GL bake, GPU bind);
+shader split-sum + cavity + SG cross-fade in pbr_shader.c; knobs
+refl_* in render.json. Bake rides --bake-probes (CLIENT_BAKE_REFL=0
+skips, REFL_SPACING overrides). Known v1 limits, follow-up material:
+- probe selection is distance-weighted only (no visibility weighting);
+  an interior fragment near an exterior probe can sample through walls.
+  Mitigated by SDF sun-visibility in the bake + near-geometry placement.
+- bake lighting is tint x (sun x probe-sun-vis + hemispherical ambient)
+  + emissive: no textures, no per-fragment shadows, no probe-SH bounce.
+- fragment probe pick is an O(count<=128) loop; fine at 25-64 probes,
+  needs a froxel/brick index if counts grow.
